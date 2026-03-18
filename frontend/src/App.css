@@ -1,0 +1,444 @@
+@import url('https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700;900&display=swap');
+
+:root {
+  --yelp-red: #d32323;
+  --yelp-red-dark: #af1a1a;
+  --yelp-orange: #f15700;
+  --yelp-dark: #1b1b1b;
+  --yelp-gray: #666;
+  --yelp-light-gray: #f4f4f4;
+  --yelp-border: #e0e0e0;
+  --yelp-white: #fff;
+  --yelp-link: #0073bb;
+  --navbar-h: 60px;
+  --sidebar-w: 260px;
+  --radius: 6px;
+  --shadow: 0 2px 8px rgba(0,0,0,0.12);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.16);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 15px; scroll-behavior: smooth; }
+body { font-family: 'Lato','Helvetica Neue',Arial,sans-serif; color: var(--yelp-dark); background: #fff; line-height: 1.5; }
+a { color: var(--yelp-link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+button { cursor: pointer; font-family: inherit; border: none; background: none; }
+input, textarea, select { font-family: inherit; font-size: 1rem; }
+
+.app-main { padding-top: var(--navbar-h); min-height: calc(100vh - var(--navbar-h)); }
+
+/* NAVBAR */
+.yelp-navbar { position: fixed; top: 0; left: 0; right: 0; z-index: 1000; height: var(--navbar-h); background: var(--yelp-red); box-shadow: 0 2px 6px rgba(0,0,0,0.25); }
+.navbar-inner { max-width: 1200px; margin: 0 auto; height: 100%; display: flex; align-items: center; gap: 12px; padding: 0 16px; }
+.navbar-logo { flex-shrink: 0; display: flex; align-items: center; text-decoration: none; margin-right: 8px; }
+.navbar-logo:hover { text-decoration: none; }
+.navbar-search { flex: 1; display: flex; align-items: center; background: #fff; border-radius: 4px; overflow: hidden; height: 38px; max-width: 680px; }
+.search-field { display: flex; align-items: center; flex: 1; padding: 0 10px; }
+.search-field-left { border-right: 1px solid var(--yelp-border); }
+.search-icon { font-size: 13px; margin-right: 6px; opacity: 0.6; }
+.search-input { border: none; outline: none; flex: 1; font-size: 0.9rem; }
+.search-divider-v { width: 1px; background: var(--yelp-border); height: 60%; }
+.search-btn { background: #b01717; color: #fff; padding: 0 16px; height: 38px; font-size: 0.9rem; font-weight: 700; }
+.search-btn:hover { background: #8b1010; }
+.navbar-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.nav-link { color: #fff; font-size: 0.875rem; font-weight: 600; padding: 6px 10px; border-radius: 4px; text-decoration: none; }
+.nav-link:hover { background: rgba(255,255,255,0.15); text-decoration: none; }
+.nav-link-signup { border: 1.5px solid rgba(255,255,255,0.7); border-radius: 4px; }
+.nav-link-btn { color: #fff; font-size: 0.875rem; font-weight: 600; padding: 6px 10px; border-radius: 4px; text-decoration: none; }
+.nav-link-btn:hover { background: rgba(255,255,255,0.15); text-decoration: none; }
+.nav-divider { width: 1px; height: 22px; background: rgba(255,255,255,0.3); margin: 0 4px; }
+.user-menu { position: relative; }
+.user-avatar-btn { display: flex; align-items: center; gap: 6px; color: #fff; font-size: 0.875rem; font-weight: 600; padding: 4px 8px; border-radius: 4px; }
+.user-avatar-btn:hover { background: rgba(255,255,255,0.15); }
+.nav-avatar { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; }
+.nav-avatar-placeholder { width: 30px; height: 30px; border-radius: 50%; background: rgba(255,255,255,0.3); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.85rem; color: #fff; }
+.nav-username { max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chevron { font-size: 10px; opacity: 0.8; }
+.dropdown-menu { position: absolute; top: calc(100% + 8px); right: 0; background: #fff; border: 1px solid var(--yelp-border); border-radius: var(--radius); box-shadow: var(--shadow-lg); min-width: 180px; z-index: 2000; overflow: hidden; }
+.dropdown-header { padding: 12px 16px; }
+.dropdown-header strong { display: block; font-size: 0.95rem; }
+.dropdown-role { font-size: 0.75rem; color: var(--yelp-gray); text-transform: capitalize; }
+.dropdown-divider { height: 1px; background: var(--yelp-border); }
+.dropdown-item { display: block; width: 100%; text-align: left; padding: 10px 16px; font-size: 0.875rem; color: var(--yelp-dark); text-decoration: none; }
+.dropdown-item:hover { background: var(--yelp-light-gray); text-decoration: none; }
+.dropdown-logout { color: var(--yelp-red); }
+
+/* HOME */
+.home-page {}
+.hero-section { position: relative; overflow: hidden; height: 360px; display: flex; align-items: center; justify-content: center; }
+.hero-bg { position: absolute; inset: 0; background: linear-gradient(135deg,#2c0000 0%,#8b1010 40%,#c53030 70%,#e05050 100%); }
+.hero-overlay { position: absolute; inset: 0; background: linear-gradient(to bottom,rgba(0,0,0,0.1),rgba(0,0,0,0.4)); }
+.hero-content { position: relative; z-index: 1; text-align: center; padding: 0 16px; width: 100%; max-width: 780px; }
+.hero-title { font-size: 2.4rem; font-weight: 900; color: #fff; margin-bottom: 24px; text-shadow: 0 2px 8px rgba(0,0,0,0.4); line-height: 1.2; }
+.hero-search-form { width: 100%; }
+.hero-search-box { display: flex; align-items: center; background: #fff; border-radius: 6px; overflow: hidden; height: 52px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
+.hero-search-field { display: flex; align-items: center; flex: 1; padding: 0 16px; }
+.hero-search-field:first-child { border-right: 1px solid var(--yelp-border); }
+.hero-search-icon { font-size: 15px; margin-right: 8px; }
+.hero-search-input { border: none; outline: none; flex: 1; font-size: 1rem; }
+.hero-search-btn { background: var(--yelp-red); color: #fff; padding: 0 28px; height: 52px; font-size: 1rem; font-weight: 700; }
+.hero-search-btn:hover { background: var(--yelp-red-dark); }
+.hero-search-divider { display: none; }
+
+/* AI BANNER */
+.ai-banner-section { background: #fff7ed; border-bottom: 1px solid #fed7aa; }
+.ai-banner { max-width: 1200px; margin: 0 auto; padding: 12px 16px; display: flex; align-items: center; gap: 12px; }
+.ai-banner-icon { font-size: 22px; }
+.ai-banner-text { flex: 1; font-size: 0.9rem; color: #7c2d12; }
+.ai-banner-text strong { color: #c2410c; }
+.ai-banner-btn { background: var(--yelp-orange); color: #fff; padding: 8px 18px; border-radius: 4px; font-weight: 700; font-size: 0.875rem; }
+.ai-banner-btn:hover { background: #d44e00; }
+
+/* CATEGORIES */
+.categories-section { border-bottom: 1px solid var(--yelp-border); background: #fff; padding: 16px 0; }
+.section-inner { max-width: 1200px; margin: 0 auto; padding: 0 16px; }
+.categories-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.category-pill { display: flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 20px; border: 1.5px solid var(--yelp-border); background: #fff; font-size: 0.85rem; font-weight: 600; color: var(--yelp-dark); text-decoration: none; transition: all 0.15s; }
+.category-pill:hover { border-color: var(--yelp-red); color: var(--yelp-red); background: #fff5f5; text-decoration: none; }
+.cat-icon { font-size: 16px; }
+
+/* FEATURED */
+.featured-section { padding: 32px 0; background: #fafafa; }
+.section-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 20px; }
+.section-title { font-size: 1.4rem; font-weight: 900; color: var(--yelp-dark); }
+.section-link { font-size: 0.875rem; color: var(--yelp-link); }
+
+/* RESTAURANT GRID */
+.restaurant-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(240px,1fr)); gap: 20px; }
+
+/* CTA */
+.cta-section { padding: 32px 0; background: #fff; border-top: 1px solid var(--yelp-border); }
+.cta-card { display: flex; align-items: center; justify-content: space-between; background: linear-gradient(135deg,#fff5f5,#fff); border: 1px solid #fecaca; border-radius: 8px; padding: 28px 32px; }
+.cta-title { font-size: 1.3rem; font-weight: 800; margin-bottom: 6px; }
+.cta-desc { color: var(--yelp-gray); font-size: 0.9rem; }
+.cta-btn { background: var(--yelp-red); color: #fff; padding: 12px 24px; border-radius: 4px; font-weight: 700; text-decoration: none; white-space: nowrap; font-size: 0.95rem; }
+.cta-btn:hover { background: var(--yelp-red-dark); text-decoration: none; }
+
+/* RESTAURANT CARD */
+.restaurant-card { background: #fff; border-radius: var(--radius); border: 1px solid var(--yelp-border); overflow: hidden; transition: box-shadow 0.2s,transform 0.2s; display: flex; flex-direction: column; }
+.restaurant-card:hover { box-shadow: var(--shadow-lg); transform: translateY(-2px); }
+.card-image-link { display: block; text-decoration: none; }
+.card-image { position: relative; height: 160px; overflow: hidden; background: #f4f4f4; }
+.card-image img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s; }
+.restaurant-card:hover .card-image img { transform: scale(1.04); }
+.card-image-placeholder { height: 100%; display: flex; align-items: center; justify-content: center; font-size: 48px; opacity: 0.4; }
+.fav-btn { position: absolute; top: 8px; right: 8px; background: rgba(255,255,255,0.9); border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-size: 16px; color: var(--yelp-red); box-shadow: 0 1px 4px rgba(0,0,0,0.2); transition: transform 0.15s; }
+.fav-btn:hover { transform: scale(1.15); }
+.card-body { padding: 12px 14px 14px; flex: 1; display: flex; flex-direction: column; gap: 5px; }
+.card-header-row { display: flex; justify-content: space-between; align-items: flex-start; }
+.card-name { font-size: 0.95rem; font-weight: 700; color: var(--yelp-dark); text-decoration: none; }
+.card-name:hover { color: var(--yelp-red); text-decoration: underline; }
+.card-price { font-size: 0.8rem; color: var(--yelp-gray); font-weight: 600; }
+.card-rating-row { display: flex; align-items: center; gap: 4px; }
+.card-rating-num { font-size: 0.8rem; font-weight: 700; }
+.card-review-count { font-size: 0.8rem; color: var(--yelp-gray); }
+.card-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.card-tag { font-size: 0.75rem; background: var(--yelp-light-gray); padding: 2px 8px; border-radius: 10px; color: var(--yelp-gray); }
+.card-location { font-size: 0.75rem; color: var(--yelp-gray); }
+.card-description { font-size: 0.8rem; color: var(--yelp-gray); margin-top: 4px; line-height: 1.4; }
+
+/* AUTH */
+.auth-page { min-height: calc(100vh - var(--navbar-h)); background: var(--yelp-light-gray); display: flex; align-items: center; justify-content: center; padding: 40px 16px; }
+.auth-card { background: #fff; border-radius: 8px; box-shadow: var(--shadow-lg); padding: 40px 36px; width: 100%; max-width: 420px; }
+.auth-card-wide { max-width: 520px; }
+.auth-logo { text-align: center; margin-bottom: 8px; }
+.auth-logo-text { font-size: 2.5rem; font-weight: 900; color: var(--yelp-red); font-family: Georgia,serif; letter-spacing: -1px; }
+.auth-logo-star { font-size: 1rem; color: var(--yelp-red); vertical-align: super; }
+.auth-title { font-size: 1.3rem; font-weight: 700; text-align: center; margin-bottom: 24px; }
+.auth-form { display: flex; flex-direction: column; gap: 16px; }
+.auth-submit-btn { background: var(--yelp-red); color: #fff; width: 100%; padding: 12px; border-radius: 4px; font-size: 1rem; font-weight: 700; margin-top: 4px; }
+.auth-submit-btn:hover { background: var(--yelp-red-dark); }
+.auth-submit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.auth-footer { text-align: center; margin-top: 20px; font-size: 0.875rem; color: var(--yelp-gray); }
+.auth-link { color: var(--yelp-red); font-weight: 600; }
+.auth-terms { font-size: 0.75rem; color: var(--yelp-gray); text-align: center; margin-top: 16px; line-height: 1.5; }
+.role-toggle { display: flex; gap: 10px; }
+.role-btn { flex: 1; padding: 10px; border: 2px solid var(--yelp-border); border-radius: 6px; font-size: 0.85rem; font-weight: 600; color: var(--yelp-gray); transition: all 0.15s; }
+.role-btn-active { border-color: var(--yelp-red); color: var(--yelp-red); background: #fff5f5; }
+
+/* FORMS */
+.form-group { display: flex; flex-direction: column; gap: 4px; }
+.form-group-flex { flex: 1; }
+.form-label { font-size: 0.85rem; font-weight: 700; color: var(--yelp-dark); }
+.form-input, .form-select { border: 1px solid var(--yelp-border); border-radius: 4px; padding: 9px 12px; font-size: 0.9rem; outline: none; width: 100%; transition: border-color 0.15s; }
+.form-input:focus, .form-select:focus { border-color: #007aff; }
+.form-textarea { border: 1px solid var(--yelp-border); border-radius: 4px; padding: 9px 12px; font-size: 0.9rem; outline: none; width: 100%; resize: vertical; transition: border-color 0.15s; line-height: 1.5; }
+.form-textarea:focus { border-color: #007aff; }
+.form-file-input { font-size: 0.875rem; }
+.form-row { display: flex; gap: 12px; flex-wrap: wrap; }
+.form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
+.btn-primary { background: var(--yelp-red); color: #fff; padding: 10px 22px; border-radius: 4px; font-weight: 700; font-size: 0.9rem; }
+.btn-primary:hover { background: var(--yelp-red-dark); }
+.btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn-secondary { background: #fff; color: var(--yelp-dark); padding: 10px 22px; border-radius: 4px; font-weight: 600; font-size: 0.9rem; border: 1px solid var(--yelp-border); }
+.btn-secondary:hover { background: var(--yelp-light-gray); }
+.btn-sm-primary { background: var(--yelp-red); color: #fff; padding: 6px 14px; border-radius: 4px; font-weight: 700; font-size: 0.8rem; text-decoration: none; display: inline-block; }
+.btn-sm-primary:hover { background: var(--yelp-red-dark); text-decoration: none; }
+
+/* SEARCH PAGE */
+.search-page { padding: 24px 0; min-height: 100%; background: #fafafa; }
+.search-page-inner { max-width: 1200px; margin: 0 auto; padding: 0 16px; display: flex; gap: 24px; align-items: flex-start; }
+.search-sidebar { width: var(--sidebar-w); flex-shrink: 0; background: #fff; border: 1px solid var(--yelp-border); border-radius: var(--radius); padding: 20px; position: sticky; top: calc(var(--navbar-h) + 16px); }
+.sidebar-title { font-size: 1rem; font-weight: 800; margin-bottom: 16px; }
+.filter-group { margin-bottom: 20px; }
+.filter-label { font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--yelp-gray); display: block; margin-bottom: 8px; }
+.filter-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.filter-chip { padding: 5px 11px; border-radius: 14px; font-size: 0.8rem; font-weight: 600; border: 1px solid var(--yelp-border); color: var(--yelp-dark); background: #fff; transition: all 0.12s; }
+.filter-chip:hover { border-color: var(--yelp-red); color: var(--yelp-red); }
+.filter-chip-active { background: var(--yelp-red); color: #fff; border-color: var(--yelp-red); }
+.sort-radio { display: flex; align-items: center; gap: 8px; padding: 5px 0; cursor: pointer; font-size: 0.875rem; }
+.sort-radio input { accent-color: var(--yelp-red); }
+.search-results { flex: 1; min-width: 0; }
+.search-results-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--yelp-border); }
+.search-results-title { font-size: 1.25rem; font-weight: 800; }
+.search-results-loc { font-weight: 400; color: var(--yelp-gray); font-size: 1rem; }
+.search-results-count { font-size: 0.85rem; color: var(--yelp-gray); }
+.loading-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(240px,1fr)); gap: 20px; }
+.card-skeleton { height: 260px; border-radius: var(--radius); background: linear-gradient(90deg,#f0f0f0 25%,#e8e8e8 50%,#f0f0f0 75%); background-size: 200% 100%; animation: shimmer 1.4s infinite; }
+@keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+.empty-state { text-align: center; padding: 60px 20px; }
+.empty-icon { font-size: 48px; margin-bottom: 16px; }
+.empty-state h3 { font-size: 1.2rem; font-weight: 700; margin-bottom: 8px; }
+.empty-state p { color: var(--yelp-gray); }
+.empty-state-sm { text-align: center; padding: 24px; color: var(--yelp-gray); }
+
+/* DETAIL PAGE */
+.detail-page { max-width: 1200px; margin: 0 auto; padding: 0 0 40px; }
+.detail-photos { background: #1a1a1a; }
+.detail-photo-main { position: relative; height: 420px; overflow: hidden; }
+.detail-photo-main img { width: 100%; height: 100%; object-fit: cover; }
+.photo-count { position: absolute; bottom: 12px; right: 12px; background: rgba(0,0,0,0.7); color: #fff; padding: 5px 12px; border-radius: 4px; font-size: 0.8rem; }
+.detail-photo-thumbs { display: flex; gap: 4px; padding: 4px; background: #111; overflow-x: auto; }
+.photo-thumb { height: 70px; width: 100px; object-fit: cover; cursor: pointer; opacity: 0.6; transition: opacity 0.15s; border-radius: 3px; }
+.photo-thumb:hover,.photo-thumb.active { opacity: 1; }
+.detail-photo-placeholder { height: 280px; background: var(--yelp-light-gray); display: flex; align-items: center; justify-content: center; font-size: 72px; opacity: 0.3; }
+.detail-body { display: flex; gap: 32px; padding: 24px 16px 0; align-items: flex-start; }
+.detail-main { flex: 1; min-width: 0; }
+.detail-sidebar { width: 280px; flex-shrink: 0; }
+.detail-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; gap: 16px; }
+.detail-header-left { flex: 1; }
+.detail-name { font-size: 2rem; font-weight: 900; margin-bottom: 8px; line-height: 1.2; }
+.detail-rating-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.detail-rating-num { font-size: 1.1rem; font-weight: 800; }
+.detail-review-count { font-size: 0.875rem; color: var(--yelp-gray); }
+.detail-tags { display: flex; gap: 8px; flex-wrap: wrap; }
+.tag { padding: 4px 10px; border-radius: 4px; font-size: 0.8rem; font-weight: 600; }
+.tag-cuisine { background: var(--yelp-light-gray); color: var(--yelp-dark); }
+.tag-price { background: #f0fdf4; color: #166534; }
+.tag-claimed { background: #eff6ff; color: #1e40af; }
+.detail-header-right { display: flex; flex-direction: column; gap: 8px; min-width: 140px; }
+.fav-large-btn { padding: 10px 16px; border-radius: 4px; font-weight: 700; font-size: 0.875rem; border: 1.5px solid var(--yelp-red); color: var(--yelp-red); background: #fff; text-align: center; }
+.fav-large-btn:hover { background: #fff5f5; }
+.fav-large-btn-active { background: var(--yelp-red); color: #fff; }
+.write-review-btn { padding: 10px 16px; border-radius: 4px; font-weight: 700; font-size: 0.875rem; background: var(--yelp-red); color: #fff; text-align: center; }
+.write-review-btn:hover { background: var(--yelp-red-dark); }
+.claim-btn { padding: 10px 16px; border-radius: 4px; font-weight: 700; font-size: 0.8rem; border: 1px solid var(--yelp-border); color: var(--yelp-dark); background: #fff; }
+.claim-btn:hover { background: var(--yelp-light-gray); }
+.detail-section { margin-bottom: 28px; padding-bottom: 28px; border-bottom: 1px solid var(--yelp-border); }
+.detail-section:last-child { border-bottom: none; }
+.detail-section-title { font-size: 1.1rem; font-weight: 800; margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; }
+.inline-review-btn { font-size: 0.8rem; font-weight: 700; color: var(--yelp-red); }
+.detail-description { font-size: 0.95rem; color: #444; line-height: 1.7; }
+.amenities-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.amenity-tag { padding: 5px 12px; border-radius: 20px; background: var(--yelp-light-gray); font-size: 0.8rem; }
+.no-reviews { text-align: center; padding: 32px; color: var(--yelp-gray); }
+.reviews-list { display: flex; flex-direction: column; gap: 20px; }
+.review-card { padding: 16px; border: 1px solid var(--yelp-border); border-radius: 6px; }
+.review-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+.review-user-info { display: flex; align-items: center; gap: 10px; }
+.review-avatar { width: 36px; height: 36px; border-radius: 50%; overflow: hidden; flex-shrink: 0; }
+.review-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.review-avatar-placeholder { width: 36px; height: 36px; border-radius: 50%; background: var(--yelp-red); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.9rem; }
+.review-user-name { font-weight: 700; font-size: 0.9rem; }
+.review-date { font-size: 0.8rem; color: var(--yelp-gray); }
+.review-rating-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.review-actions { display: flex; gap: 8px; }
+.review-edit-btn { font-size: 0.78rem; color: var(--yelp-link); font-weight: 600; }
+.review-delete-btn { font-size: 0.78rem; color: var(--yelp-red); font-weight: 600; }
+.review-comment { font-size: 0.9rem; line-height: 1.6; color: #333; }
+.review-photos { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.review-photo { width: 80px; height: 80px; object-fit: cover; border-radius: 4px; }
+.sidebar-card { background: #fff; border: 1px solid var(--yelp-border); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+.sidebar-card-title { font-size: 0.85rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; color: var(--yelp-gray); }
+.sidebar-info-row { display: flex; gap: 8px; margin-bottom: 10px; font-size: 0.875rem; align-items: flex-start; line-height: 1.4; }
+.sidebar-info-icon { flex-shrink: 0; }
+.sidebar-link { color: var(--yelp-link); word-break: break-all; }
+.hours-row { display: flex; gap: 12px; font-size: 0.85rem; padding: 3px 0; }
+.hours-day { width: 30px; font-weight: 700; }
+.hours-time { color: var(--yelp-gray); }
+.edit-restaurant-btn { display: block; width: 100%; padding: 10px; text-align: center; border: 1px solid var(--yelp-border); border-radius: 4px; font-weight: 700; font-size: 0.875rem; color: var(--yelp-dark); text-decoration: none; }
+.edit-restaurant-btn:hover { background: var(--yelp-light-gray); text-decoration: none; }
+
+/* REVIEW FORM */
+.review-form-card { background: #fafafa; border: 1px solid var(--yelp-border); border-radius: 6px; padding: 20px; margin-bottom: 20px; }
+.review-form-title { font-size: 1rem; font-weight: 700; margin-bottom: 16px; }
+.star-picker { display: flex; align-items: center; gap: 4px; }
+.star-pick { font-size: 28px; cursor: pointer; color: #ccc; transition: color 0.1s; user-select: none; }
+.star-pick-filled { color: var(--yelp-orange); }
+.star-label { font-size: 0.8rem; color: var(--yelp-gray); margin-left: 8px; font-style: italic; }
+.review-form-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 8px; }
+
+/* ADD RESTAURANT FORM PAGE */
+.form-page { background: var(--yelp-light-gray); min-height: 100%; padding: 32px 16px; }
+.form-page-inner { max-width: 780px; margin: 0 auto; }
+.form-page-title { font-size: 1.8rem; font-weight: 900; margin-bottom: 24px; }
+.restaurant-form { display: flex; flex-direction: column; gap: 0; }
+.form-section { background: #fff; border: 1px solid var(--yelp-border); border-radius: var(--radius); padding: 24px; margin-bottom: 16px; display: flex; flex-direction: column; gap: 14px; }
+.form-section-title { font-size: 1rem; font-weight: 800; padding-bottom: 10px; border-bottom: 1px solid var(--yelp-border); }
+.price-toggle { display: flex; gap: 8px; }
+.price-btn { padding: 8px 16px; border: 1.5px solid var(--yelp-border); border-radius: 4px; font-weight: 700; font-size: 0.9rem; color: var(--yelp-gray); }
+.price-btn-active { border-color: #166534; color: #166534; background: #f0fdf4; }
+.hours-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.hours-row-input { display: flex; align-items: center; gap: 10px; }
+.hours-day-label { width: 36px; font-weight: 700; font-size: 0.85rem; color: var(--yelp-gray); }
+.hours-input { flex: 1; }
+.amenities-picker { display: flex; flex-wrap: wrap; gap: 8px; }
+.amenity-pick-btn { padding: 6px 14px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; border: 1.5px solid var(--yelp-border); color: var(--yelp-dark); background: #fff; }
+.amenity-pick-active { background: var(--yelp-dark); color: #fff; border-color: var(--yelp-dark); }
+
+/* PROFILE PAGE */
+.profile-header-bg { background: linear-gradient(135deg,var(--yelp-red),#8b0000); padding: 32px 0; }
+.profile-header-inner { max-width: 1000px; margin: 0 auto; padding: 0 24px; display: flex; align-items: flex-end; gap: 24px; }
+.profile-avatar-wrap { position: relative; }
+.profile-avatar-lg { width: 100px; height: 100px; border-radius: 50%; overflow: hidden; border: 4px solid rgba(255,255,255,0.8); }
+.profile-avatar-lg img { width: 100%; height: 100%; object-fit: cover; }
+.profile-avatar-placeholder { width: 100%; height: 100%; background: rgba(255,255,255,0.25); display: flex; align-items: center; justify-content: center; font-size: 2.5rem; font-weight: 900; color: #fff; }
+.photo-upload-btn { position: absolute; bottom: 4px; right: 0; background: #fff; border-radius: 50%; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; font-size: 14px; cursor: pointer; box-shadow: var(--shadow); }
+.profile-header-info { flex: 1; padding-bottom: 4px; }
+.profile-name { font-size: 1.8rem; font-weight: 900; color: #fff; margin-bottom: 4px; }
+.profile-meta { display: flex; gap: 12px; color: rgba(255,255,255,0.8); font-size: 0.875rem; margin-bottom: 12px; }
+.owner-badge { background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 10px; font-size: 0.78rem; }
+.profile-stats { display: flex; gap: 24px; }
+.stat { display: flex; flex-direction: column; align-items: center; }
+.stat strong { font-size: 1.3rem; color: #fff; font-weight: 900; }
+.stat span { font-size: 0.75rem; color: rgba(255,255,255,0.75); }
+.profile-body { max-width: 1000px; margin: 0 auto; padding: 0 24px 40px; }
+.profile-tabs { display: flex; border-bottom: 2px solid var(--yelp-border); margin-bottom: 24px; margin-top: 16px; }
+.profile-tab { padding: 10px 20px; font-size: 0.875rem; font-weight: 700; color: var(--yelp-gray); border-bottom: 3px solid transparent; margin-bottom: -2px; transition: all 0.15s; }
+.profile-tab:hover { color: var(--yelp-red); }
+.profile-tab-active { color: var(--yelp-red); border-bottom-color: var(--yelp-red); }
+.profile-form,.prefs-form { display: flex; flex-direction: column; gap: 16px; max-width: 680px; }
+.prefs-section-title { font-size: 0.9rem; font-weight: 800; margin-top: 8px; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--yelp-gray); }
+.prefs-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.pref-chip { padding: 7px 14px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; border: 1.5px solid var(--yelp-border); color: var(--yelp-dark); background: #fff; transition: all 0.12s; }
+.pref-chip:hover { border-color: var(--yelp-red); }
+.pref-chip-active { background: var(--yelp-red); color: #fff; border-color: var(--yelp-red); }
+.history-section-title { font-size: 1rem; font-weight: 800; margin-bottom: 12px; }
+.history-reviews { display: flex; flex-direction: column; gap: 8px; }
+.history-review-item { border: 1px solid var(--yelp-border); border-radius: 6px; }
+.history-review-link { display: flex; align-items: center; gap: 12px; padding: 12px 16px; text-decoration: none; color: var(--yelp-dark); }
+.history-review-link:hover { background: var(--yelp-light-gray); text-decoration: none; }
+.history-review-comment { flex: 1; font-size: 0.875rem; color: #444; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.history-review-date { font-size: 0.78rem; color: var(--yelp-gray); }
+.empty-text { color: var(--yelp-gray); font-size: 0.9rem; }
+
+/* OWNER DASHBOARD */
+.owner-dashboard { padding: 32px 0; background: var(--yelp-light-gray); min-height: 100%; }
+.dashboard-inner { max-width: 1000px; margin: 0 auto; padding: 0 16px; }
+.dashboard-title { font-size: 1.8rem; font-weight: 900; margin-bottom: 24px; }
+.stats-row { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+.stat-card { flex: 1; min-width: 120px; background: #fff; border: 1px solid var(--yelp-border); border-radius: var(--radius); padding: 20px; text-align: center; }
+.stat-value { font-size: 1.8rem; font-weight: 900; color: var(--yelp-red); }
+.stat-label { font-size: 0.8rem; color: var(--yelp-gray); font-weight: 600; margin-top: 4px; }
+.dashboard-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; }
+.dashboard-card { background: #fff; border: 1px solid var(--yelp-border); border-radius: var(--radius); padding: 20px; }
+.dashboard-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.dashboard-card-header h3 { font-size: 0.95rem; font-weight: 800; }
+.owner-restaurant-list { display: flex; flex-direction: column; gap: 10px; }
+.owner-restaurant-item { display: flex; align-items: center; gap: 12px; padding: 10px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; transition: all 0.15s; }
+.owner-restaurant-item:hover,.owner-restaurant-item.active { background: var(--yelp-light-gray); border-color: var(--yelp-border); }
+.owner-rest-photo { width: 52px; height: 52px; border-radius: 4px; overflow: hidden; flex-shrink: 0; }
+.owner-rest-photo img { width: 100%; height: 100%; object-fit: cover; }
+.owner-rest-photo-placeholder { width: 52px; height: 52px; background: var(--yelp-light-gray); display: flex; align-items: center; justify-content: center; font-size: 20px; border-radius: 4px; }
+.owner-rest-info { flex: 1; }
+.owner-rest-name { font-weight: 700; font-size: 0.9rem; margin-bottom: 3px; }
+.owner-rest-reviews { font-size: 0.75rem; color: var(--yelp-gray); }
+.owner-edit-btn { font-size: 14px; padding: 6px; color: var(--yelp-gray); text-decoration: none; }
+.owner-edit-btn:hover { color: var(--yelp-red); }
+.rating-dist { display: flex; flex-direction: column; gap: 8px; }
+.dist-row { display: flex; align-items: center; gap: 10px; font-size: 0.85rem; }
+.dist-label { width: 30px; font-weight: 700; color: var(--yelp-orange); text-align: right; }
+.dist-bar-bg { flex: 1; height: 12px; background: var(--yelp-light-gray); border-radius: 6px; overflow: hidden; }
+.dist-bar { height: 100%; background: var(--yelp-orange); border-radius: 6px; transition: width 0.5s; }
+.dist-count { width: 28px; font-weight: 600; color: var(--yelp-gray); text-align: right; }
+.recent-reviews-list { display: flex; flex-direction: column; gap: 14px; }
+.recent-review-item { padding-bottom: 14px; border-bottom: 1px solid var(--yelp-border); }
+.recent-review-item:last-child { border-bottom: none; }
+.recent-review-header { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.recent-review-user { display: flex; align-items: center; gap: 8px; flex: 1; font-size: 0.875rem; font-weight: 600; }
+.review-avatar-sm { width: 28px; height: 28px; border-radius: 50%; background: var(--yelp-red); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; font-weight: 700; flex-shrink: 0; }
+.recent-review-date { font-size: 0.78rem; color: var(--yelp-gray); }
+.recent-review-comment { font-size: 0.875rem; color: #444; line-height: 1.5; }
+
+/* CHATBOT */
+.chat-fab { position: fixed; bottom: 28px; right: 28px; z-index: 900; background: var(--yelp-red); color: #fff; width: 60px; height: 60px; border-radius: 50%; font-size: 22px; box-shadow: 0 4px 20px rgba(0,0,0,0.25); display: flex; flex-direction: column; align-items: center; justify-content: center; transition: transform 0.2s,box-shadow 0.2s; }
+.chat-fab:hover { transform: scale(1.08); box-shadow: 0 8px 28px rgba(0,0,0,0.3); }
+.chat-fab-label { font-size: 9px; font-weight: 700; margin-top: 2px; }
+.chatbot-overlay { position: fixed; bottom: 28px; right: 28px; z-index: 1100; width: 380px; max-width: calc(100vw - 32px); box-shadow: var(--shadow-lg); border-radius: 12px; overflow: hidden; }
+.chatbot-container { display: flex; flex-direction: column; background: #fff; height: 520px; max-height: 80vh; border-radius: 12px; border: 1px solid var(--yelp-border); }
+.chatbot-header { background: var(--yelp-red); color: #fff; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; }
+.chatbot-header-left { display: flex; align-items: center; gap: 10px; }
+.chatbot-avatar { font-size: 22px; }
+.chatbot-title { font-weight: 800; font-size: 0.9rem; }
+.chatbot-subtitle { font-size: 0.72rem; opacity: 0.8; }
+.chatbot-header-right { display: flex; gap: 6px; }
+.chatbot-clear,.chatbot-close { color: rgba(255,255,255,0.8); font-size: 16px; padding: 4px 6px; border-radius: 4px; }
+.chatbot-clear:hover,.chatbot-close:hover { background: rgba(255,255,255,0.15); color: #fff; }
+.chatbot-messages { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; background: #f9f9f9; }
+.chat-message { display: flex; gap: 8px; align-items: flex-start; }
+.chat-message-user { flex-direction: row-reverse; }
+.chat-avatar { width: 28px; height: 28px; border-radius: 50%; background: var(--yelp-red); display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
+.chat-user-avatar { width: 28px; height: 28px; border-radius: 50%; background: #555; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+.chat-bubble { background: #fff; border: 1px solid var(--yelp-border); border-radius: 10px; padding: 9px 12px; max-width: 80%; font-size: 0.85rem; line-height: 1.5; }
+.chat-message-user .chat-bubble { background: var(--yelp-red); color: #fff; border-color: var(--yelp-red); }
+.chat-thinking { display: flex; gap: 4px; align-items: center; padding: 12px; }
+.chat-thinking span { width: 7px; height: 7px; border-radius: 50%; background: var(--yelp-gray); animation: thinking 1.2s infinite; }
+.chat-thinking span:nth-child(2) { animation-delay: 0.2s; }
+.chat-thinking span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes thinking { 0%,80%,100%{transform:scale(1);opacity:0.5} 40%{transform:scale(1.3);opacity:1} }
+.chat-recommendations { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.chat-rec-card { background: var(--yelp-light-gray); border-radius: 6px; padding: 8px 10px; text-decoration: none; color: var(--yelp-dark); display: block; border: 1px solid var(--yelp-border); }
+.chat-rec-card:hover { background: #ffe8e8; text-decoration: none; }
+.chat-rec-name { font-weight: 700; font-size: 0.82rem; margin-bottom: 3px; }
+.chat-rec-meta { display: flex; gap: 8px; font-size: 0.75rem; color: var(--yelp-gray); }
+.chat-rec-reason { font-size: 0.75rem; color: var(--yelp-gray); font-style: italic; margin-top: 3px; }
+.chatbot-login-prompt { padding: 8px 12px; background: #fff7ed; border-top: 1px solid #fed7aa; text-align: center; }
+.chatbot-login-btn { font-size: 0.8rem; color: #c2410c; font-weight: 700; text-decoration: none; }
+.chatbot-quick-actions { display: flex; gap: 6px; padding: 6px 10px; overflow-x: auto; background: #fff; border-top: 1px solid var(--yelp-border); }
+.quick-action-btn { padding: 5px 11px; border-radius: 14px; font-size: 0.75rem; font-weight: 600; border: 1.5px solid var(--yelp-border); white-space: nowrap; color: var(--yelp-dark); background: #fff; }
+.quick-action-btn:hover { border-color: var(--yelp-red); color: var(--yelp-red); }
+.chatbot-input-area { display: flex; gap: 6px; padding: 10px 12px; background: #fff; border-top: 1px solid var(--yelp-border); }
+.chatbot-input { flex: 1; border: 1px solid var(--yelp-border); border-radius: 20px; padding: 8px 14px; font-size: 0.85rem; outline: none; }
+.chatbot-input:focus { border-color: var(--yelp-red); }
+.chatbot-send-btn { background: var(--yelp-red); color: #fff; width: 34px; height: 34px; border-radius: 50%; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+.chatbot-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.chatbot-send-btn:not(:disabled):hover { background: var(--yelp-red-dark); }
+
+/* LOADING */
+.page-loading { min-height: calc(100vh - var(--navbar-h)); display: flex; align-items: center; justify-content: center; }
+.spinner { width: 40px; height: 40px; border-radius: 50%; border: 3px solid var(--yelp-light-gray); border-top-color: var(--yelp-red); animation: spin 0.7s linear infinite; }
+@keyframes spin { to{transform:rotate(360deg)} }
+
+/* RESPONSIVE */
+@media (max-width:900px){
+  .hero-title{font-size:1.7rem}
+  .hero-search-box{flex-direction:column;height:auto}
+  .hero-search-field{width:100%;border-right:none!important;border-bottom:1px solid var(--yelp-border)}
+  .hero-search-btn{width:100%;height:44px;border-radius:0 0 6px 6px}
+  .search-page-inner{flex-direction:column}
+  .search-sidebar{width:100%;position:static}
+  .detail-body{flex-direction:column}
+  .detail-sidebar{width:100%}
+  .dashboard-grid{grid-template-columns:1fr}
+  .navbar-search{display:none}
+  .profile-header-inner{flex-direction:column;align-items:center;text-align:center}
+  .detail-header{flex-direction:column}
+  .chatbot-overlay{right:12px;bottom:12px;width:calc(100vw - 24px)}
+}
+@media (max-width:600px){
+  .restaurant-grid{grid-template-columns:1fr}
+  .form-row{flex-direction:column}
+  .hours-grid{grid-template-columns:1fr}
+  .cta-card{flex-direction:column;gap:16px}
+  .auth-card{padding:28px 20px}
+}
