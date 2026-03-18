@@ -1,7 +1,7 @@
 """
-AI Assistant Router - STUB for lab partner to implement.
+AI Assistant Router 
 
-Lab partner should implement:
+Shriram tasks:
 1. Load user preferences from DB on first query
 2. Use Langchain for NLP and query interpretation
 3. Extract: cuisine type, price range, dietary restrictions, occasion, ambiance
@@ -53,7 +53,7 @@ async def chat(
             ]
         }
     
-    TODO (lab partner): Replace this stub with Langchain + Tavily implementation.
+    TODO: Replace this stub with Langchain + Tavily implementation.
     Steps:
         1. Load user prefs: db.query(models.UserPreferences).filter(...).first()
         2. Initialize Langchain LLM (ChatOpenAI) with system prompt containing prefs
@@ -62,8 +62,8 @@ async def chat(
         5. Use Tavily to search for current hours/events if needed
         6. Rank and return results with conversational response
     """
-    # Stub response — replace with real implementation
+    # Stub response: replace with real implementation
     return schemas.ChatResponse(
-        response="AI Assistant is not yet implemented. Your lab partner will complete this feature.",
+        response="AI Assistant is not yet implemented. Complete this feature.",
         recommendations=[],
     )
