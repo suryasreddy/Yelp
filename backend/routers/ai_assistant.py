@@ -1,758 +1,524 @@
 """
-AI Assistant Router
+routers/ai_assistant.py
+========================
+AI restaurant assistant: LangChain + OpenAI for NLP, MySQL for listings,
+optional Tavily web search when the model requests live context.
 
-Purpose:
-    Implements the POST /ai-assistant/chat endpoint for the Yelp-style restaurant
-    recommendation chatbot.
-
-What this file does:
-    1. Loads the logged-in user's saved dining preferences from the database.
-    2. Interprets natural language queries using LangChain + OpenAI when available.
-    3. Falls back to deterministic keyword parsing if LLM keys are unavailable.
-    4. Queries the restaurants table using extracted filters and user preferences.
-    5. Ranks restaurants based on relevance + rating + preference alignment.
-    6. Optionally enriches context using Tavily search.
-    7. Returns a conversational response and structured recommendations.
-
-Design goals:
-    - Production-style structure with helper functions.
-    - Clear separation of concerns.
-    - Robust fallback behavior for grading/demo environments.
+Environment variables (.env):
+  OPENAI_API_KEY=sk-...
+  TAVILY_API_KEY=tvly-...
 """
-
-from __future__ import annotations
 
 import json
 import os
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
+from langchain_tavily import TavilySearch
+from sqlalchemy import desc, or_
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
 
-from database import get_db
 import models
 import schemas
 from auth import get_current_user
-
-# LangChain imports are optional at runtime. We use them if the keys are present.
-try:
-    from langchain_openai import ChatOpenAI
-    LANGCHAIN_OPENAI_AVAILABLE = True
-except Exception:
-    LANGCHAIN_OPENAI_AVAILABLE = False
-
-try:
-    from langchain_community.tools.tavily_search import TavilySearchResults
-    TAVILY_AVAILABLE = True
-except Exception:
-    TAVILY_AVAILABLE = False
-
+from database import get_db
 
 router = APIRouter(prefix="/ai-assistant", tags=["AI Assistant"])
 
+# ─────────────────────────────────────────────────────────────────────────────
+# LLM + Tavily — initialised once at module load
+# ─────────────────────────────────────────────────────────────────────────────
 
-# -----------------------------
-# Static vocab / normalization
-# -----------------------------
-# These lists help with deterministic extraction and DB matching.
-CUISINES = [
-    "italian", "chinese", "mexican", "indian", "japanese", "american",
-    "thai", "french", "mediterranean", "korean", "vietnamese",
-    "vegan", "vegetarian", "seafood", "pizza", "sushi", "bbq", "burger"
-]
-
-DIETARY_KEYWORDS = [
-    "vegan", "vegetarian", "halal", "gluten-free", "gluten free",
-    "kosher", "dairy-free", "dairy free", "pescatarian"
-]
-
-AMBIANCE_KEYWORDS = [
-    "casual", "fine dining", "family-friendly", "family friendly",
-    "romantic", "quiet", "outdoor", "outdoor seating", "cozy",
-    "trendy", "luxury", "formal"
-]
-
-OCCASION_KEYWORDS = [
-    "anniversary", "birthday", "date", "romantic dinner",
-    "business lunch", "business dinner", "brunch", "dinner",
-    "lunch", "breakfast", "late night", "celebration"
-]
-
-PRICE_PATTERNS = {
-    "$": [r"\$", r"\bbudget\b", r"\bcheap\b", r"\baffordable\b", r"\blow cost\b"],
-    "$$": [r"\$\$", r"\bmid[- ]?range\b", r"\bmoderate\b"],
-    "$$$": [r"\$\$\$", r"\bupscale\b", r"\bpremium\b", r"\bhigh[- ]?end\b"],
-    "$$$$": [r"\$\$\$\$", r"\bluxury\b", r"\bvery expensive\b", r"\bfine dining\b"],
-}
+_llm = ChatOpenAI(
+    model="gpt-4o-mini",
+    temperature=0.7,
+    openai_api_key=os.getenv("OPENAI_API_KEY"),
+)
 
 
-# ----------------------------------------
-# Utility helpers for environment handling
-# ----------------------------------------
-def _get_env(name: str) -> Optional[str]:
-    """
-    Reads an environment variable safely and normalizes blank strings to None.
-    """
-    value = os.getenv(name)
-    if value is None:
-        return None
-    value = value.strip()
-    return value if value else None
+def _get_tavily() -> TavilySearch:
+    return TavilySearch(
+        max_results=3,
+        tavily_api_key=os.getenv("TAVILY_API_KEY"),
+    )
 
 
-def _is_usable_key(value: Optional[str]) -> bool:
-    """
-    Checks whether an API key looks usable.
-    We intentionally treat 'dummy', placeholder values, or empty strings as unavailable.
-    """
-    if not value:
-        return False
-
-    lowered = value.lower()
-    bad_markers = [
-        "dummy",
-        "your-openai-api-key-here",
-        "your-tavily-api-key-here",
-        "placeholder",
-    ]
-    return not any(marker in lowered for marker in bad_markers)
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. Load preferences from DB (used for ranking + system prompt only)
+#
+#    UserPreferences columns:
+#      cuisine_preferences, price_range, preferred_location, dietary_needs,
+#      ambiance_preferences, sort_preference
+# ─────────────────────────────────────────────────────────────────────────────
 
 
-# ----------------------------------------
-# Preference loading / formatting helpers
-# ----------------------------------------
-def _safe_list(value: Any) -> List[str]:
-    """
-    Normalizes JSON/list-like DB values to a list of lowercase strings.
-    The project stores several preference fields as JSON arrays in MySQL.
-    """
-    if value is None:
-        return []
-
-    if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-
-    if isinstance(value, str):
-        # Supports either a single string or a comma-separated value.
-        parts = [p.strip() for p in value.split(",")]
-        return [p for p in parts if p]
-
-    return [str(value).strip()]
-
-
-def _load_user_preferences(
-    db: Session,
-    current_user: models.User,
-) -> Dict[str, Any]:
-    """
-    Loads the logged-in user's stored dining preferences from the DB.
-
-    Returns a normalized dictionary so the rest of the pipeline can work
-    consistently even if some fields are missing.
-    """
-    prefs = (
+def _load_preferences(user_id: int, db: Session) -> dict:
+    """Return saved preferences or {} if none — used for personalization in scoring."""
+    row = (
         db.query(models.UserPreferences)
-        .filter(models.UserPreferences.user_id == current_user.id)
+        .filter(models.UserPreferences.user_id == user_id)
         .first()
     )
+    if not row:
+        return {}
 
-    if not prefs:
-        return {
-            "cuisine_preferences": [],
-            "price_range": None,
-            "dietary_needs": [],
-            "ambiance_preferences": [],
-            "preferred_location": None,
-            "sort_preference": None,
-        }
+    def safe_list(value) -> List[str]:
+        if not value:
+            return []
+        if isinstance(value, list):
+            return [str(v).strip() for v in value if v]
+        return []
 
-    # Use getattr defensively because field names may vary slightly by implementation.
     return {
-        "cuisine_preferences": _safe_list(getattr(prefs, "cuisine_preferences", [])),
-        "price_range": getattr(prefs, "price_range", None),
-        "dietary_needs": _safe_list(getattr(prefs, "dietary_needs", [])),
-        "ambiance_preferences": _safe_list(getattr(prefs, "ambiance_preferences", [])),
-        "preferred_location": getattr(prefs, "preferred_location", None),
-        "sort_preference": getattr(prefs, "sort_preference", None),
+        "cuisines": safe_list(row.cuisine_preferences),
+        "price_range": (row.price_range or "").strip(),
+        "location": (row.preferred_location or "").strip(),
+        "dietary": safe_list(row.dietary_needs),
+        "ambiance": safe_list(row.ambiance_preferences),
+        "sort_preference": (row.sort_preference or "rating").strip().lower(),
     }
 
 
-def _build_preference_summary(preferences: Dict[str, Any]) -> str:
-    """
-    Formats user preferences into a compact summary for LLM prompting and reasoning.
-    """
-    cuisines = ", ".join(preferences["cuisine_preferences"]) or "not specified"
-    dietary = ", ".join(preferences["dietary_needs"]) or "not specified"
-    ambiance = ", ".join(preferences["ambiance_preferences"]) or "not specified"
-    price = preferences["price_range"] or "not specified"
-    location = preferences["preferred_location"] or "not specified"
-    sort_pref = preferences["sort_preference"] or "not specified"
-
-    return (
-        f"Saved cuisine preferences: {cuisines}. "
-        f"Saved price range: {price}. "
-        f"Saved dietary needs: {dietary}. "
-        f"Saved ambiance preferences: {ambiance}. "
-        f"Preferred location: {location}. "
-        f"Sort preference: {sort_pref}."
-    )
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. System prompt — instructs exact JSON output and multi-turn merge rules
+# ─────────────────────────────────────────────────────────────────────────────
 
 
-# ----------------------------------------
-# Conversation / extraction helpers
-# ----------------------------------------
-def _serialize_history(conversation_history) -> str:
-    """
-    Converts prior conversation turns into plain text.
-
-    Supports both:
-    - dict items like {"role": "user", "content": "..."}
-    - Pydantic objects like ChatMessage(role="user", content="...")
-    """
-    if not conversation_history:
-        return "No prior conversation."
-
+def _build_system_prompt(prefs: dict, user: models.User) -> str:
     lines = []
-    for turn in conversation_history[-8:]:
-        # Handle dict-style messages
-        if isinstance(turn, dict):
-            role = str(turn.get("role", "user")).strip()
-            content = str(turn.get("content", "")).strip()
-        else:
-            # Handle Pydantic model / object-style messages
-            role = str(getattr(turn, "role", "user")).strip()
-            content = str(getattr(turn, "content", "")).strip()
+    if getattr(user, "city", None) or getattr(user, "state", None):
+        acct = ", ".join(
+            x for x in [getattr(user, "city", None) or "", getattr(user, "state", None) or ""] if x
+        )
+        if acct:
+            lines.append(f"- Account city/state   : {acct} (use for 'near me' when the user implies it)")
+    if prefs.get("cuisines"):
+        lines.append(f"- Preferred cuisines : {', '.join(prefs['cuisines'])}")
+    if prefs.get("price_range"):
+        lines.append(f"- Price preference   : {prefs['price_range']}")
+    if prefs.get("location"):
+        lines.append(f"- Preferred area     : {prefs['location']}")
+    if prefs.get("dietary"):
+        lines.append(f"- Dietary needs      : {', '.join(prefs['dietary'])}")
+    if prefs.get("ambiance"):
+        lines.append(f"- Ambiance           : {', '.join(prefs['ambiance'])}")
 
-        if content:
-            lines.append(f"{role}: {content}")
+    pref_block = (
+        "\n".join(lines)
+        if lines
+        else "No preferences saved yet — still be helpful and friendly."
+    )
 
-    return "\n".join(lines) if lines else "No prior conversation."
+    return f"""You are a warm, knowledgeable restaurant discovery assistant for a Yelp-style app.
 
+Saved profile (use ONLY to personalize tone and ranking — see critical rules below):
+{pref_block}
 
-def _extract_price_from_text(text: str) -> Optional[str]:
-    """
-    Extracts a likely price tier from the user's natural language message.
-    """
-    lowered = text.lower()
-    for price_tier, patterns in PRICE_PATTERNS.items():
-        for pattern in patterns:
-            if re.search(pattern, lowered):
-                return price_tier
-    return None
+For EVERY user message you must output EXACTLY one JSON block in this shape (use ```json fences):
 
-
-def _keyword_extract_filters(
-    message: str,
-    conversation_history: Optional[List[Dict[str, str]]],
-    preferences: Dict[str, Any],
-) -> Dict[str, Any]:
-    """
-    Deterministic fallback parser used when LLM access is unavailable.
-
-    This parser is intentionally simple but still useful for demo/lab grading:
-    it extracts likely cuisine, price, dietary, ambiance, and occasion values
-    from the user's message plus limited conversational context.
-    """
-    combined_text = f"{_serialize_history(conversation_history)}\n{message}".lower()
-
-    cuisines_found = [c for c in CUISINES if c in combined_text]
-    dietary_found = [d for d in DIETARY_KEYWORDS if d in combined_text]
-    ambiance_found = [a for a in AMBIANCE_KEYWORDS if a in combined_text]
-    occasion_found = [o for o in OCCASION_KEYWORDS if o in combined_text]
-
-    # Normalize common variants
-    dietary_found = [
-        "gluten-free" if d in {"gluten free", "gluten-free"} else
-        "dairy-free" if d in {"dairy free", "dairy-free"} else d
-        for d in dietary_found
-    ]
-    ambiance_found = [
-        "family-friendly" if a in {"family friendly", "family-friendly"} else
-        "outdoor seating" if a in {"outdoor", "outdoor seating"} else a
-        for a in ambiance_found
-    ]
-
-    extracted = {
-        "cuisine": cuisines_found[0] if cuisines_found else None,
-        "price_range": _extract_price_from_text(combined_text) or preferences["price_range"],
-        "dietary_needs": dietary_found or preferences["dietary_needs"],
-        "ambiance": ambiance_found[0] if ambiance_found else (
-            preferences["ambiance_preferences"][0].lower()
-            if preferences["ambiance_preferences"] else None
-        ),
-        "occasion": occasion_found[0] if occasion_found else None,
-        "location": preferences.get("preferred_location"),
-        "must_be_open_now": "open now" in combined_text or "open tonight" in combined_text,
-    }
-    return extracted
-
-
-async def _llm_extract_filters(
-    message: str,
-    conversation_history: Optional[List[Dict[str, str]]],
-    preferences: Dict[str, Any],
-) -> Dict[str, Any]:
-    """
-    Uses LangChain + OpenAI to interpret the user's restaurant request.
-
-    Returns a structured dictionary. If anything fails, the caller should fall back
-    to deterministic extraction.
-    """
-    api_key = _get_env("OPENAI_API_KEY")
-    if not (_is_usable_key(api_key) and LANGCHAIN_OPENAI_AVAILABLE):
-        raise RuntimeError("OpenAI key or LangChain OpenAI package not available.")
-
-    system_prompt = f"""
-You are a restaurant recommendation parser for a Yelp-like application.
-
-Your job:
-- Read the user's latest request and short conversation history.
-- Extract structured search filters.
-- Use saved preferences if the user did not explicitly override them.
-- Return ONLY valid JSON with this exact schema:
-
+```json
 {{
-  "cuisine": "string or null",
-  "price_range": "$ | $$ | $$$ | $$$$ | null",
-  "dietary_needs": ["array of strings"],
-  "ambiance": "string or null",
-  "occasion": "string or null",
-  "location": "string or null",
-  "must_be_open_now": true
+  "filters": {{
+    "cuisine_type": null,
+    "price_range": null,
+    "dietary": [],
+    "ambiance": [],
+    "keywords": [],
+    "location": null
+  }},
+  "needs_web_search": false,
+  "web_search_query": null,
+  "reply": "Your short, natural reply here."
 }}
+```
 
-Saved user preferences:
-{_build_preference_summary(preferences)}
+Critical rules for "filters" (these drive database search — follow strictly):
+1. ONLY include cuisine_type, price_range, location, dietary, keywords, or ambiance when the USER (or prior turns in the conversation) clearly asked for them.
+2. NEVER copy saved profile cuisines, price, location, dietary, or ambiance into "filters" just because they exist in the profile. Profile is not a search filter.
+3. Generic hunger ("I'm hungry", "what restaurants do you recommend?", "surprise me") → leave cuisine_type null, price_range null, dietary/ambiance/keywords empty unless the user said otherwise. The backend WILL return real restaurant cards from the database — do not reply with only "tell me your preference"; give a short friendly intro and the JSON so the user sees picks immediately.
+4. Multi-turn: MERGE the full intent. Example: "I want Mexican" then "make it vegan" → cuisine_type "Mexican", dietary ["vegan"] (keep Mexican; add vegan).
+5. "Best rated near me" / location in conversation → set "location" from the user's city if they gave it; if they refer to saved area, you may set location to that string only when the user implied "near me" or similar.
+6. price_range must be one of: "$", "$$", "$$$", "$$$$", or null — only when the user cares about budget or you infer it clearly from their words (not from profile alone).
+7. needs_web_search: true ONLY for live web data (hours today, is X open now, trending this week, special events). Set web_search_query to a short search phrase when true.
+8. reply: conversational, friendly, not robotic — brief setup only; do not paste a long numbered list (the app shows cards).
+9. NEVER invent or guess restaurant names in "reply". Real names come only from the server after your JSON.
+10. dietary[] = HARD constraints only (vegan, gluten-free, halal, nut-free). keywords[] / ambiance[] = SOFT wishes (sweet, dessert, romantic, spicy) — they influence ranking, not exclusion. Do not put "sweet" or "dessert" in dietary unless it is a medical/restriction need.
+11. If the user narrows a follow-up (e.g. only "Mexican" after a sweeter ask), drop obsolete keywords from filters so you do not keep stale terms.
+12. Questions about "open right now" / hours → set needs_web_search true and a focused web_search_query; still output filters for cuisine/location so the DB can show cards.
 
-Rules:
-- If the user says "something romantic", set ambiance to "romantic".
-- If the user mentions vegan/vegetarian/halal/gluten-free, include them in dietary_needs.
-- Use null for unknown single values.
-- Keep dietary_needs as an array.
-- Return JSON only. No markdown. No explanation.
-    """.strip()
-
-    human_prompt = f"""
-Conversation history:
-{_serialize_history(conversation_history)}
-
-Latest user message:
-{message}
-    """.strip()
-
-    llm = ChatOpenAI(
-        model="gpt-4o-mini",
-        temperature=0,
-        api_key=api_key,
-    )
-
-    response = await llm.ainvoke(
-        [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": human_prompt},
-        ]
-    )
-
-    content = response.content.strip()
-    parsed = json.loads(content)
-
-    # Normalize the result to reduce downstream surprises.
-    parsed["dietary_needs"] = _safe_list(parsed.get("dietary_needs", []))
-    return {
-        "cuisine": parsed.get("cuisine"),
-        "price_range": parsed.get("price_range"),
-        "dietary_needs": parsed.get("dietary_needs", []),
-        "ambiance": parsed.get("ambiance"),
-        "occasion": parsed.get("occasion"),
-        "location": parsed.get("location"),
-        "must_be_open_now": bool(parsed.get("must_be_open_now", False)),
-    }
+Extract from natural language: cuisine, budget, dietary needs, occasion/ambiance (map occasion into keywords or ambiance arrays), and location when relevant.
+"""
 
 
-async def _extract_filters(
-    message: str,
-    conversation_history: Optional[List[Dict[str, str]]],
-    preferences: Dict[str, Any],
-) -> Dict[str, Any]:
-    """
-    Main extraction wrapper.
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. LangChain messages from history + current user message
+# ─────────────────────────────────────────────────────────────────────────────
 
-    Tries LLM-based parsing first for stronger NLU.
-    Falls back to deterministic keyword parsing if the AI path is unavailable or fails.
-    """
+
+def _build_lc_messages(
+    system_prompt: str,
+    history: List[schemas.ChatMessage],
+    current_message: str,
+) -> List[Any]:
+    messages: List[Any] = [SystemMessage(content=system_prompt)]
+    for turn in history or []:
+        role = (turn.role or "").strip().lower()
+        content = (turn.content or "").strip()
+        if not content:
+            continue
+        if role == "user":
+            messages.append(HumanMessage(content=content))
+        elif role == "assistant":
+            messages.append(AIMessage(content=content))
+    messages.append(HumanMessage(content=current_message))
+    return messages
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. Parse structured JSON from the LLM response
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _parse_llm_output(raw: str) -> dict:
+    """Extract ```json ... ``` or first brace object; safe defaults on failure."""
+    match = re.search(r"```json\s*(.*?)\s*```", raw, re.DOTALL)
+    if match:
+        json_str = match.group(1)
+    else:
+        brace = re.search(r"\{.*\}", raw, re.DOTALL)
+        json_str = brace.group(0) if brace else "{}"
+
     try:
-        return await _llm_extract_filters(message, conversation_history, preferences)
-    except Exception:
-        return _keyword_extract_filters(message, conversation_history, preferences)
+        parsed = json.loads(json_str)
+    except (json.JSONDecodeError, TypeError):
+        parsed = {}
+
+    parsed.setdefault("filters", {})
+    parsed.setdefault("needs_web_search", False)
+    parsed.setdefault("web_search_query", None)
+    parsed.setdefault("reply", raw)
+    return parsed
 
 
-# ----------------------------------------
-# Database query and ranking helpers
-# ----------------------------------------
-def _build_restaurant_query(
-    db: Session,
-    extracted_filters: Dict[str, Any],
-) -> Any:
+def _normalize_filters(filters: dict) -> dict:
+    """Ensure list fields are lists of non-empty strings; strip strings."""
+    f = dict(filters or {})
+    ct = f.get("cuisine_type")
+    f["cuisine_type"] = (str(ct).strip() if ct else "") or None
+
+    pr = f.get("price_range")
+    if pr is None or str(pr).strip() == "":
+        f["price_range"] = None
+    else:
+        f["price_range"] = str(pr).strip()
+
+    loc = f.get("location")
+    f["location"] = (str(loc).strip() if loc else "") or None
+
+    for key in ("dietary", "ambiance", "keywords"):
+        v = f.get(key)
+        if v is None:
+            f[key] = []
+        elif isinstance(v, list):
+            f[key] = [str(x).strip() for x in v if x and str(x).strip()]
+        else:
+            s = str(v).strip()
+            f[key] = [s] if s else []
+    return f
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. Text blob for matching dietary / ambiance / keywords against a restaurant
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _restaurant_text_blob(r: models.Restaurant) -> str:
+    """Lowercased text from searchable fields + JSON keyword/amenity lists."""
+    parts: List[str] = [
+        r.name or "",
+        r.description or "",
+        r.cuisine_type or "",
+    ]
+    try:
+        parts.append(json.dumps(r.keywords or []))
+        parts.append(json.dumps(r.amenities or []))
+    except (TypeError, ValueError):
+        pass
+    return " ".join(parts).lower()
+
+
+def _matches_all_terms(r: models.Restaurant, terms: List[str]) -> bool:
+    """Every term must appear somewhere in the blob (AND)."""
+    if not terms:
+        return True
+    blob = _restaurant_text_blob(r)
+    return all(t.lower() in blob for t in terms if t)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 6. Query restaurants — LLM filters only (never saved profile as hard filters)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_DB_FETCH_CAP = 250
+
+
+def _location_tokens(loc: str) -> List[str]:
     """
-    Builds a SQLAlchemy query for restaurants based on extracted user intent.
-
-    Notes:
-    - We use defensive matching because student schemas vary slightly.
-    - We match cuisine via cuisine_type.
-    - We use description/amenities text matching for ambiance/dietary hints.
+    Split locations like 'San Francisco, CA' into ['San Francisco', 'CA'] so we OR-match
+    columns. A single ilike on the full string fails when city is stored as 'San Francisco'
+    only (substring 'San Francisco, CA' never matches).
     """
-    query = db.query(models.Restaurant)
+    if not loc or not str(loc).strip():
+        return []
+    raw = str(loc).strip()
+    parts = [p.strip() for p in re.split(r"[,|]", raw) if p.strip()]
+    if not parts:
+        parts = [raw]
+    aliases = {"sf": "San Francisco", "san fran": "San Francisco"}
+    out: List[str] = []
+    for p in parts:
+        key = p.lower()
+        if key in aliases:
+            out.append(aliases[key])
+        out.append(p)
+    seen = set()
+    uniq: List[str] = []
+    for x in out:
+        if len(x) < 2:
+            continue
+        lk = x.lower()
+        if lk not in seen:
+            seen.add(lk)
+            uniq.append(x)
+    return uniq
 
-    cuisine = extracted_filters.get("cuisine")
-    price_range = extracted_filters.get("price_range")
-    ambiance = extracted_filters.get("ambiance")
-    dietary_needs = extracted_filters.get("dietary_needs", [])
-    location = extracted_filters.get("location")
+
+def _apply_location_filter(q, location: str):
+    tokens = _location_tokens(location)
+    if not tokens:
+        return q
+    conds = []
+    for t in tokens:
+        pat = f"%{t}%"
+        conds.extend(
+            [
+                models.Restaurant.city.ilike(pat),
+                models.Restaurant.address.ilike(pat),
+                models.Restaurant.state.ilike(pat),
+                models.Restaurant.zip_code.ilike(pat),
+            ]
+        )
+    return q.filter(or_(*conds))
+
+
+def _query_restaurants(filters: dict, db: Session) -> List[models.Restaurant]:
+    """
+    Apply SQL filters from the LLM only. Saved preferences are NOT merged here.
+
+    Broad queries (no cuisine, location, price, or dietary constraints): return many
+    rows so ranking can surface diverse results.
+
+    **Strict post-filter (Python): only `dietary` terms** (vegan, halal, etc.).
+    Keywords and ambiance are NOT used to exclude rows — they are scored in
+    `_rank_restaurants` only. Requiring "sweet" or "romantic" in the text used to
+    wipe all candidates when no row contained that substring.
+    """
+    f = _normalize_filters(filters)
+
+    cuisine = f.get("cuisine_type") or ""
+    location = f.get("location") or ""
+    price_str = f.get("price_range")
+
+    diet = list(f.get("dietary") or [])
+    dietary_strict = [t for t in diet if t]
+
+    q = db.query(models.Restaurant)
 
     if cuisine:
-        query = query.filter(models.Restaurant.cuisine_type.ilike(f"%{cuisine}%"))
-
-    if price_range:
-        query = query.filter(models.Restaurant.price_tier == price_range)
+        q = q.filter(models.Restaurant.cuisine_type.ilike(f"%{cuisine}%"))
 
     if location:
-        # Many student projects store city directly on Restaurant.
-        query = query.filter(
-            or_(
-                models.Restaurant.city.ilike(f"%{location}%"),
-                models.Restaurant.address.ilike(f"%{location}%"),
-            )
+        q = _apply_location_filter(q, location)
+
+    if price_str:
+        try:
+            pt = models.PriceTier(price_str)
+            q = q.filter(models.Restaurant.price_tier == pt)
+        except ValueError:
+            pass
+
+    # Broad: nothing from LLM narrows the candidate set — return a large slice for ranking
+    if not cuisine and not location and not price_str and not dietary_strict:
+        return (
+            q.order_by(desc(models.Restaurant.average_rating))
+            .limit(_DB_FETCH_CAP)
+            .all()
         )
 
-    # For ambiance and dietary hints, search relevant text fields defensively.
-    if ambiance:
-        query = query.filter(
-            or_(
-                models.Restaurant.description.ilike(f"%{ambiance}%"),
-                models.Restaurant.amenities.ilike(f"%{ambiance}%")
-                if hasattr(models.Restaurant, "amenities")
-                else False,
-            )
-        )
+    rows = (
+        q.order_by(desc(models.Restaurant.average_rating))
+        .limit(_DB_FETCH_CAP)
+        .all()
+    )
 
-    for dietary in dietary_needs:
-        query = query.filter(
-            or_(
-                models.Restaurant.description.ilike(f"%{dietary}%"),
-                models.Restaurant.amenities.ilike(f"%{dietary}%")
-                if hasattr(models.Restaurant, "amenities")
-                else False,
-                models.Restaurant.cuisine_type.ilike(f"%{dietary}%"),
-            )
-        )
+    if not dietary_strict:
+        return rows
 
-    return query
+    matched = [r for r in rows if _matches_all_terms(r, dietary_strict)]
+    # If nothing mentions vegan/halal/etc. in our text fields, still return rows so we
+    # can show cards; ranking + reason will nudge toward best textual fit.
+    return matched if matched else rows
 
 
-def _compute_match_reason(
-    restaurant: models.Restaurant,
-    extracted_filters: Dict[str, Any],
-    preferences: Dict[str, Any],
-) -> str:
-    """
-    Builds a specific reason string explaining why the restaurant was recommended.
-    """
-    reasons = []
-
-    cuisine = (extracted_filters.get("cuisine") or "").lower()
-    ambiance = (extracted_filters.get("ambiance") or "").lower()
-    price_range = extracted_filters.get("price_range")
-    dietary_needs = [d.lower() for d in extracted_filters.get("dietary_needs", [])]
-
-    rest_cuisine = (getattr(restaurant, "cuisine_type", "") or "").lower()
-    desc = (getattr(restaurant, "description", "") or "").lower()
-    amenities = str(getattr(restaurant, "amenities", "") or "").lower()
-    searchable_text = f"{rest_cuisine} {desc} {amenities}"
-
-    if cuisine and cuisine in rest_cuisine:
-        reasons.append(f"matches your {cuisine.title()} preference")
-
-    if price_range and getattr(restaurant, "price_tier", None) == price_range:
-        reasons.append(f"fits your {price_range} budget")
-
-    if ambiance and ambiance in searchable_text:
-        reasons.append(f"offers a {ambiance} atmosphere")
-
-    for dietary in dietary_needs:
-        if dietary in searchable_text:
-            reasons.append(f"supports {dietary} dining")
-
-    if not reasons:
-        reasons.append("is highly rated and relevant to your request")
-
-    return ", ".join(reasons[:2]).capitalize() + "."
-
-def _score_restaurant(
-    restaurant: models.Restaurant,
-    extracted_filters: Dict[str, Any],
-    preferences: Dict[str, Any],
-) -> float:
-    """
-    Computes a balanced relevance score for ranking restaurants.
-
-    Higher score = better recommendation.
-    """
-    score = 0.0
-
-    cuisine = (extracted_filters.get("cuisine") or "").lower()
-    ambiance = (extracted_filters.get("ambiance") or "").lower()
-    price_range = extracted_filters.get("price_range")
-    dietary_needs = [d.lower() for d in extracted_filters.get("dietary_needs", [])]
-    occasion = (extracted_filters.get("occasion") or "").lower()
-
-    rest_name = (getattr(restaurant, "name", "") or "").lower()
-    rest_cuisine = (getattr(restaurant, "cuisine_type", "") or "").lower()
-    desc = (getattr(restaurant, "description", "") or "").lower()
-    amenities = str(getattr(restaurant, "amenities", "") or "").lower()
-
-    searchable_text = f"{rest_name} {rest_cuisine} {desc} {amenities}"
-
-    # Strong intent matches
-    if cuisine and cuisine in rest_cuisine:
-        score += 4.0
-
-    if price_range and getattr(restaurant, "price_tier", None) == price_range:
-        score += 2.5
-
-    if ambiance and ambiance in searchable_text:
-        score += 3.0
-
-    if occasion and occasion in searchable_text:
-        score += 2.0
-
-    for dietary in dietary_needs:
-        if dietary in searchable_text:
-            score += 2.5
-
-    # Preference alignment
-    for preferred_cuisine in preferences.get("cuisine_preferences", []):
-        if preferred_cuisine.lower() in rest_cuisine:
-            score += 1.0
-
-    for preferred_ambiance in preferences.get("ambiance_preferences", []):
-        if preferred_ambiance.lower() in searchable_text:
-            score += 0.8
-
-    for preferred_dietary in preferences.get("dietary_needs", []):
-        if preferred_dietary.lower() in searchable_text:
-            score += 0.8
-
-    # Quality score
-    avg_rating = float(getattr(restaurant, "average_rating", 0) or 0)
-    review_count = int(getattr(restaurant, "review_count", 0) or 0)
-
-    score += avg_rating * 1.2
-    score += min(review_count / 20.0, 2.0)
-
-    return score
+# ─────────────────────────────────────────────────────────────────────────────
+# 7. Rank by relevance: query filters + soft boosts from saved preferences
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 def _rank_restaurants(
     restaurants: List[models.Restaurant],
-    extracted_filters: Dict[str, Any],
-    preferences: Dict[str, Any],
-) -> List[Tuple[models.Restaurant, float]]:
-    """
-    Applies relevance scoring and returns restaurants sorted from best to worst.
-    """
-    scored = [
-        (restaurant, _score_restaurant(restaurant, extracted_filters, preferences))
-        for restaurant in restaurants
-    ]
-    scored.sort(key=lambda item: item[1], reverse=True)
-    return scored
+    filters: dict,
+    prefs: dict,
+) -> List[dict]:
+    f = _normalize_filters(filters)
+
+    pref_cuisines = [c.lower() for c in (prefs.get("cuisines") or [])]
+    pref_price = (prefs.get("price_range") or "").strip()
+    pref_loc = (prefs.get("location") or "").strip().lower()
+
+    q_cuisine = (f.get("cuisine_type") or "").lower().strip()
+    q_price = (f.get("price_range") or "").strip()
+    q_terms = (
+        [x.lower() for x in (f.get("keywords") or [])]
+        + [x.lower() for x in (f.get("ambiance") or [])]
+        + [x.lower() for x in (f.get("dietary") or [])]
+    )
+
+    scored: List[tuple] = []
+
+    for r in restaurants:
+        score = 0.0
+        score += float(r.average_rating or 0.0)
+        if prefs.get("sort_preference") == "rating":
+            score += float(r.average_rating or 0.0) * 0.1
+
+        r_cuisine = (r.cuisine_type or "").lower()
+        if q_cuisine and q_cuisine in r_cuisine:
+            score += 2.5
+        elif pref_cuisines and any(c in r_cuisine for c in pref_cuisines):
+            score += 1.0
+
+        r_price = r.price_tier.value if r.price_tier else ""
+        if q_price and r_price == q_price:
+            score += 2.0
+        elif pref_price and r_price == pref_price:
+            score += 1.0
+
+        text_blob = _restaurant_text_blob(r)
+        for term in q_terms:
+            if term and term in text_blob:
+                score += 1.2
+
+        city = (r.city or "").lower()
+        if pref_loc and pref_loc and pref_loc in city:
+            score += 1.5
+
+        scored.append((score, r))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    results: List[dict] = []
+    for _, r in scored[:5]:
+        r_price = r.price_tier.value if r.price_tier else ""
+        r_cuisine = r.cuisine_type or ""
+        rating_val = float(r.average_rating or 0.0)
+        blob = _restaurant_text_blob(r)
+
+        reason_parts: List[str] = []
+        if q_cuisine and q_cuisine in (r_cuisine.lower()):
+            reason_parts.append(f"matches your {r_cuisine} search")
+        elif r_cuisine:
+            reason_parts.append(f"{r_cuisine} food")
+
+        if q_terms:
+            matched = [t for t in q_terms if t in blob]
+            if matched:
+                reason_parts.append("fits " + ", ".join(matched[:3]))
+
+        if r_price:
+            reason_parts.append(f"{r_price} price tier")
+
+        if rating_val >= 4.5:
+            reason_parts.append("highly rated")
+
+        if pref_cuisines and any(c in r_cuisine for c in pref_cuisines) and not (
+            q_cuisine and q_cuisine in r_cuisine
+        ):
+            reason_parts.append("aligned with a cuisine you enjoy")
+
+        if pref_price and r_price == pref_price and q_price != pref_price:
+            reason_parts.append("matches your usual budget")
+
+        reason = "; ".join(reason_parts) if reason_parts else "Strong match for what you asked for"
+
+        results.append(
+            {
+                "id": r.id,
+                "name": r.name or "",
+                "rating": rating_val,
+                "price_tier": r_price,
+                "cuisine_type": r_cuisine,
+                "address": r.address or "",
+                "city": r.city or "",
+                "reason": reason,
+            }
+        )
+
+    return results
 
 
-# ----------------------------------------
-# Tavily enrichment helpers
-# ----------------------------------------
-async def _tavily_context(
-    message: str,
-    top_restaurants: List[models.Restaurant],
-) -> str:
-    """
-    Uses Tavily search to fetch lightweight external context such as hours/events/trending info.
+# ─────────────────────────────────────────────────────────────────────────────
+# 8. Tavily — only when needs_web_search is true (live hours, trends, events)
+# ─────────────────────────────────────────────────────────────────────────────
 
-    This step is optional. If Tavily is unavailable, we simply return an empty string.
-    """
-    tavily_key = _get_env("TAVILY_API_KEY")
-    if not (_is_usable_key(tavily_key) and TAVILY_AVAILABLE and top_restaurants):
+
+def _run_tavily(query: str) -> str:
+    """Run Tavily and return plain text snippets; empty string on failure."""
+    if not query or not (os.getenv("TAVILY_API_KEY") or "").strip():
         return ""
-
     try:
-        restaurant_names = ", ".join(r.name for r in top_restaurants[:3])
-        query = (
-            f"Restaurant hours, current popularity, or notable context for: "
-            f"{restaurant_names}. User request: {message}"
-        )
-
-        tool = TavilySearchResults(
-            max_results=3,
-            tavily_api_key=tavily_key,
-        )
-
-        # Tavily tool may return string/list depending on package version.
-        result = tool.invoke(query)
-        return str(result)[:1200]
+        tool = _get_tavily()
+        raw: Any = tool.invoke({"query": query})
+        if isinstance(raw, dict):
+            if raw.get("error"):
+                return ""
+            items = raw.get("results") or []
+            lines: List[str] = []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                title = item.get("title") or ""
+                content = item.get("content") or ""
+                if title or content:
+                    lines.append(f"{title}: {content}".strip())
+            return "\n".join(lines)
+        return str(raw)
     except Exception:
         return ""
 
 
-# ----------------------------------------
-# Response generation helpers
-# ----------------------------------------
-async def _llm_generate_response(
-    message: str,
-    preferences: Dict[str, Any],
-    extracted_filters: Dict[str, Any],
-    ranked_restaurants: List[Tuple[models.Restaurant, float]],
-    web_context: str,
-) -> str:
-    """
-    Uses an LLM to turn ranked structured results into a polished conversational reply.
-    Falls back to a handcrafted response if OpenAI is unavailable.
-    """
-    api_key = _get_env("OPENAI_API_KEY")
-    if not (_is_usable_key(api_key) and LANGCHAIN_OPENAI_AVAILABLE):
-        raise RuntimeError("OpenAI response generation unavailable.")
-
-    top_restaurants = ranked_restaurants[:5]
-    restaurant_lines = []
-    for restaurant, score in top_restaurants:
-        restaurant_lines.append(
-            f"- {restaurant.name} | cuisine={restaurant.cuisine_type} | "
-            f"price={restaurant.price_tier} | rating={getattr(restaurant, 'average_rating', 0)} | "
-            f"score={round(score, 2)} | "
-            f"description={(getattr(restaurant, 'description', '') or '')[:180]}"
-        )
-
-    system_prompt = """
-You are a helpful restaurant recommendation assistant in a Yelp-style app.
-
-Write a natural, concise, friendly response that:
-- acknowledges the user's request,
-- mentions that recommendations are based on the user's preferences when relevant,
-- briefly highlights 2-4 top options,
-- sounds conversational rather than robotic,
-- does not invent facts not present in the provided data,
-- does not use markdown tables,
-- keeps the answer under 180 words.
-
-If web context is empty, do not mention external web information.
-    """.strip()
-
-    user_prompt = f"""
-User message:
-{message}
-
-Saved preferences:
-{_build_preference_summary(preferences)}
-
-Extracted filters:
-{json.dumps(extracted_filters)}
-
-Ranked restaurants:
-{chr(10).join(restaurant_lines) if restaurant_lines else "No matches found."}
-
-Web context:
-{web_context or "None"}
-    """.strip()
-
-    llm = ChatOpenAI(
-        model="gpt-4o-mini",
-        temperature=0.4,
-        api_key=api_key,
-    )
-
-    response = await llm.ainvoke(
-        [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-    )
-    return response.content.strip()
+# ─────────────────────────────────────────────────────────────────────────────
+# 9. POST /ai-assistant/chat
+# ─────────────────────────────────────────────────────────────────────────────
 
 
-def _fallback_generate_response(
-    message: str,
-    preferences: Dict[str, Any],
-    extracted_filters: Dict[str, Any],
-    ranked_restaurants: List[Tuple[models.Restaurant, float]],
-) -> str:
-    """
-    Generates a graceful non-LLM response for demos or environments without API keys.
-    """
-    if not ranked_restaurants:
-        return (
-            "I couldn’t find a strong restaurant match for that request yet. "
-            "Try changing the cuisine, price range, or ambiance, and I’ll refine the search."
-        )
-
-    top_restaurants = ranked_restaurants[:3]
-    intro_parts = []
-
-    if extracted_filters.get("cuisine"):
-        intro_parts.append(f"{str(extracted_filters['cuisine']).title()} cuisine")
-    if extracted_filters.get("price_range"):
-        intro_parts.append(f"{extracted_filters['price_range']} pricing")
-    if extracted_filters.get("ambiance"):
-        intro_parts.append(f"{extracted_filters['ambiance']} ambiance")
-
-    intro = ", ".join(intro_parts)
-    if intro:
-        opening = f"Based on your request for {intro}, here are my top picks:"
-    else:
-        opening = "Based on your request and saved preferences, here are my top picks:"
-
-    bullets = []
-    for restaurant, _score in top_restaurants:
-        reason = _compute_match_reason(restaurant, extracted_filters, preferences)
-        bullets.append(
-            f"{restaurant.name} ({getattr(restaurant, 'average_rating', 0)}★, "
-            f"{restaurant.price_tier}) - {reason}"
-        )
-
-    return opening + " " + " ".join(
-        [f"{idx + 1}. {item}" for idx, item in enumerate(bullets)]
-    )
-
-
-def _format_recommendations(
-    ranked_restaurants: List[Tuple[models.Restaurant, float]],
-    extracted_filters: Dict[str, Any],
-    preferences: Dict[str, Any],
-) -> List[Dict[str, Any]]:
-    """
-    Converts ranked SQLAlchemy restaurant objects into the response schema format expected
-    by the frontend chatbot UI.
-    """
-    recommendations = []
-
-    for restaurant, _score in ranked_restaurants[:5]:
-        recommendations.append(
-            {
-                "id": restaurant.id,
-                "name": restaurant.name,
-                "rating": float(getattr(restaurant, "average_rating", 0) or 0),
-                "price_tier": getattr(restaurant, "price_tier", None),
-                "cuisine_type": getattr(restaurant, "cuisine_type", None),
-                "reason": _compute_match_reason(restaurant, extracted_filters, preferences),
-            }
-        )
-
-    return recommendations
-
-
-# ----------------------------------------
-# Main endpoint
-# ----------------------------------------
 @router.post("/chat", response_model=schemas.ChatResponse)
 async def chat(
     payload: schemas.ChatRequest,
@@ -760,97 +526,92 @@ async def chat(
     current_user: models.User = Depends(get_current_user),
 ):
     """
-    Main AI chatbot endpoint.
-
-    Flow:
-        1. Load current user's saved preferences.
-        2. Interpret natural language query using LangChain or fallback parsing.
-        3. Query matching restaurants from the DB.
-        4. Rank results by relevance and quality.
-        5. Optionally enrich with Tavily web context.
-        6. Generate a conversational reply.
-        7. Return structured recommendations for the frontend cards.
+    Input: {{ message, conversation_history }}
+    Output: {{ response, recommendations }}
     """
-    message = (payload.message or "").strip()
-    conversation_history = payload.conversation_history or []
-
-    if not message:
-        return schemas.ChatResponse(
-            response="Please tell me what kind of restaurant you’re looking for.",
-            recommendations=[],
+    user_message = (payload.message or "").strip()
+    if not user_message:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="message cannot be empty.",
         )
 
-    # Step 1: Load saved preferences for the current user.
-    preferences = _load_user_preferences(db, current_user)
+    prefs = _load_preferences(current_user.id, db)
+    system_prompt = _build_system_prompt(prefs, current_user)
 
-    # Step 2: Extract structured filters from the user message + prior conversation.
-    extracted_filters = await _extract_filters(
-        message=message,
-        conversation_history=conversation_history,
-        preferences=preferences,
+    lc_messages = _build_lc_messages(
+        system_prompt,
+        payload.conversation_history or [],
+        user_message,
     )
 
-    # Step 3: Query the restaurant database using extracted filters.
-    query = _build_restaurant_query(db, extracted_filters)
-
-    # Pull a broader candidate set first, then apply custom ranking in Python.
-    candidates = query.limit(25).all()
-
-    # If the strict query returned nothing, relax the search and use high-rated restaurants.
-    if not candidates:
-        fallback_query = db.query(models.Restaurant)
-
-        cuisine = extracted_filters.get("cuisine")
-        if cuisine:
-            fallback_query = fallback_query.filter(
-                models.Restaurant.cuisine_type.ilike(f"%{cuisine}%")
-            )
-
-        candidates = (
-            fallback_query
-            .order_by(models.Restaurant.average_rating.desc(), models.Restaurant.review_count.desc())
-            .limit(25)
-            .all()
-        )
-
-    # Step 4: Rank candidate restaurants based on relevance + ratings + preferences.
-    ranked_restaurants = _rank_restaurants(
-        restaurants=candidates,
-        extracted_filters=extracted_filters,
-        preferences=preferences,
-    )
-
-    # Step 5: Optionally enrich with Tavily for current context like hours/events.
-    web_context = await _tavily_context(
-        message=message,
-        top_restaurants=[restaurant for restaurant, _score in ranked_restaurants[:3]],
-    )
-
-    # Step 6: Generate natural language response using LLM when available.
     try:
-        response_text = await _llm_generate_response(
-            message=message,
-            preferences=preferences,
-            extracted_filters=extracted_filters,
-            ranked_restaurants=ranked_restaurants,
-            web_context=web_context,
-        )
-    except Exception:
-        response_text = _fallback_generate_response(
-            message=message,
-            preferences=preferences,
-            extracted_filters=extracted_filters,
-            ranked_restaurants=ranked_restaurants,
+        ai_msg = _llm.invoke(lc_messages)
+        raw_text: str = ai_msg.content or ""
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"LLM call failed: {str(exc)}",
         )
 
-    # Step 7: Format frontend-friendly recommendation cards.
-    recommendations = _format_recommendations(
-        ranked_restaurants=ranked_restaurants,
-        extracted_filters=extracted_filters,
-        preferences=preferences,
-    )
+    parsed = _parse_llm_output(raw_text)
+    filters: dict = _normalize_filters(parsed.get("filters") or {})
+    needs_web = bool(parsed.get("needs_web_search"))
+    web_query = parsed.get("web_search_query") or ""
+    reply_text = parsed.get("reply") or raw_text
+
+    # Optional second pass with web context — only when the model asked for search
+    if needs_web and web_query:
+        web_context = _run_tavily(str(web_query).strip())
+        if web_context:
+            enrichment_msgs = lc_messages + [
+                AIMessage(content=raw_text),
+                HumanMessage(
+                    content=(
+                        "Here is live web information relevant to the query:\n"
+                        f"{web_context}\n\n"
+                        "Update your JSON if needed (same schema). "
+                        "Incorporate useful facts into reply only when appropriate."
+                    )
+                ),
+            ]
+            try:
+                enriched = _llm.invoke(enrichment_msgs)
+                enriched_data = _parse_llm_output(enriched.content or "")
+                if enriched_data.get("reply"):
+                    filters = _normalize_filters(enriched_data.get("filters") or filters)
+                    reply_text = enriched_data["reply"]
+            except Exception:
+                pass
+
+    # Do NOT merge saved preferences into filters — that caused over-filtering.
+    # Preferences are applied only inside _rank_restaurants.
+
+    try:
+        candidates = _query_restaurants(filters, db)
+        # If filters over-constrain (bad location string, etc.), still show top listings
+        if not candidates:
+            candidates = _query_restaurants({}, db)
+        recommendations = _rank_restaurants(candidates, filters, prefs)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Restaurant query failed: {exc}",
+        )
+
+    if recommendations:
+        lines: List[str] = []
+        for i, rec in enumerate(recommendations, 1):
+            stars = f"{rec['rating']:.1f}★" if rec["rating"] else "No rating"
+            price = rec["price_tier"] or "N/A"
+            lines.append(
+                f"{i}. {rec['name']} ({stars}, {price}) — {rec['reason']}"
+            )
+        reply_text = reply_text.rstrip() + "\n\n" + "\n".join(lines)
 
     return schemas.ChatResponse(
-        response=response_text,
-        recommendations=recommendations,
+        response=reply_text,
+        recommendations=[
+            schemas.RestaurantRecommendation(**rec) for rec in recommendations
+        ],
     )
