@@ -1,0 +1,24 @@
+# Python
+backend/venv/
+backend/__pycache__/
+backend/routers/__pycache__/
+*.pyc
+*.pyo
+
+# Node
+frontend/node_modules/
+frontend/build/
+
+# Environment
+backend/.env
+.env
+
+# Mac
+.DS_Store
+backend/.DS_Store
+frontend/.DS_Store
+frontend/src/.DS_Store
+backend/uploads/.DS_Store
+
+# Uploads
+backend/uploads/
