@@ -78,19 +78,34 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* AI Assistant Banner */}
-      <section className="ai-banner-section">
-        <div className="ai-banner">
-          <div className="ai-banner-icon">🤖</div>
-          <div className="ai-banner-text">
-            <strong>Try the AI Assistant</strong>
-            <span> — get personalized restaurant picks based on your taste</span>
+      {/* AI Assistant — embedded for logged-in users (prominent); guests use FAB + overlay */}
+      {user ? (
+        <section className="home-chat-embed-section">
+          <div className="section-inner">
+            <div className="home-chat-lead">
+              <h2 className="section-title">Restaurant discovery assistant</h2>
+              <p className="home-chat-sub">
+                Ask in plain language — follow up with things like &quot;make it vegan&quot; or
+                &quot;cheaper options&quot; and it remembers your thread.
+              </p>
+            </div>
+            <ChatBot embedded />
           </div>
-          <button className="ai-banner-btn" onClick={() => setChatOpen(true)}>
-            Ask Assistant
-          </button>
-        </div>
-      </section>
+        </section>
+      ) : (
+        <section className="ai-banner-section">
+          <div className="ai-banner">
+            <div className="ai-banner-icon">🤖</div>
+            <div className="ai-banner-text">
+              <strong>Try the AI Assistant</strong>
+              <span> — get personalized restaurant picks based on your taste</span>
+            </div>
+            <button type="button" className="ai-banner-btn" onClick={() => setChatOpen(true)}>
+              Ask Assistant
+            </button>
+          </div>
+        </section>
+      )}
 
       {/* Categories */}
       <section className="categories-section">
@@ -138,14 +153,19 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Floating Chat */}
-      {!chatOpen && (
-        <button className="chat-fab" onClick={() => setChatOpen(true)} title="Ask AI Assistant">
+      {/* Floating chat — guests only (logged-in users see embedded assistant above) */}
+      {!user && !chatOpen && (
+        <button
+          type="button"
+          className="chat-fab"
+          onClick={() => setChatOpen(true)}
+          title="Ask AI Assistant"
+        >
           💬
           <span className="chat-fab-label">Ask AI</span>
         </button>
       )}
-      {chatOpen && (
+      {!user && chatOpen && (
         <div className="chatbot-overlay">
           <ChatBot floating onClose={() => setChatOpen(false)} />
         </div>
