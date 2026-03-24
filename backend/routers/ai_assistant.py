@@ -12,6 +12,7 @@ Environment variables (.env):
 import json
 import os
 import re
+from datetime import datetime
 from typing import Any, List, Optional
 
 from dotenv import load_dotenv
@@ -703,6 +704,151 @@ def _run_tavily(query: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Live-hours intent detection
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _is_live_hours_query(message: str) -> bool:
+    m = (message or "").lower()
+    patterns = [
+        "open now",
+        "open right now",
+        "currently open",
+        "what's open",
+        "what is open",
+        "opening hours",
+        "closing time",
+        "close now",
+        "open today",
+    ]
+    return any(p in m for p in patterns)
+
+
+def _build_live_hours_query(message: str, filters: dict, prefs: dict) -> str:
+    """
+    Build a compact Tavily query for live-hours checks.
+    """
+    f = _normalize_filters(filters)
+    location = f.get("location") or prefs.get("location") or ""
+    cuisine = f.get("cuisine_type") or ""
+    if cuisine and location:
+        return f"{cuisine} restaurants open now in {location}"
+    if location:
+        return f"restaurants open now in {location}"
+    return "popular restaurants open now nearby"
+
+
+def _to_minutes(token: str) -> Optional[int]:
+    """
+    Parse simple time tokens used in seed data:
+    - 11am, 10pm, noon, midnight, 7:30pm
+    Returns minutes since 00:00.
+    """
+    t = (token or "").strip().lower()
+    if not t:
+        return None
+    if t == "noon":
+        return 12 * 60
+    if t == "midnight":
+        return 24 * 60
+
+    m = re.match(r"^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$", t)
+    if not m:
+        return None
+    h = int(m.group(1))
+    minute = int(m.group(2) or 0)
+    ampm = m.group(3)
+    if h == 12:
+        h = 0
+    if ampm == "pm":
+        h += 12
+    return h * 60 + minute
+
+
+def _is_open_now_from_hours(hours: Any, now: datetime) -> Optional[bool]:
+    """
+    Evaluate a restaurant's hours JSON for current local day/time.
+    Returns:
+    - True/False if parsable
+    - None if unknown/unparsable
+    """
+    if not isinstance(hours, dict):
+        return None
+
+    day = now.strftime("%A")
+    day_hours = hours.get(day)
+    if not day_hours:
+        return None
+
+    s = str(day_hours).strip().lower()
+    if not s:
+        return None
+    if s in {"closed", "close", "n/a", "na"}:
+        return False
+    if s in {"open 24 hours", "24 hours", "24/7", "all day"}:
+        return True
+
+    now_m = now.hour * 60 + now.minute
+    # Support multiple windows: "11am-2pm, 5pm-10pm"
+    windows = [w.strip() for w in re.split(r"[,;]", s) if w.strip()]
+    for w in windows:
+        if "-" not in w:
+            continue
+        start_s, end_s = [x.strip() for x in w.split("-", 1)]
+        start_m = _to_minutes(start_s)
+        end_m = _to_minutes(end_s)
+        if start_m is None or end_m is None:
+            continue
+
+        # Overnight window (e.g., 10pm-2am)
+        if end_m <= start_m:
+            if now_m >= start_m or now_m <= end_m:
+                return True
+        else:
+            if start_m <= now_m <= end_m:
+                return True
+
+    # If at least one window existed but none matched, it's closed now.
+    if any("-" in w for w in windows):
+        return False
+    return None
+
+
+def _prioritize_open_now(
+    recommendations: List[dict],
+    candidates: List[models.Restaurant],
+) -> List[dict]:
+    """
+    For live-hours queries, place currently-open restaurants first using DB hours.
+    Keeps original recommendation order within open/closed groups.
+    """
+    if not recommendations:
+        return recommendations
+    id_to_rest = {r.id: r for r in candidates}
+    now = datetime.now()
+
+    open_items: List[dict] = []
+    unknown_items: List[dict] = []
+    closed_items: List[dict] = []
+
+    for rec in recommendations:
+        r = id_to_rest.get(rec.get("id"))
+        if not r:
+            unknown_items.append(rec)
+            continue
+        status = _is_open_now_from_hours(getattr(r, "hours", None), now)
+        if status is True:
+            open_items.append(rec)
+        elif status is False:
+            closed_items.append(rec)
+        else:
+            unknown_items.append(rec)
+
+    ordered = open_items + unknown_items + closed_items
+    return ordered[:5]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 9. Grounded response intro (avoid claiming unsupported cuisine/location)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -813,6 +959,12 @@ async def chat(
     web_query = parsed.get("web_search_query") or ""
     reply_text = parsed.get("reply") or raw_text
 
+    # Deterministic guardrail: live-hours questions must use web context path.
+    if _is_live_hours_query(user_message):
+        needs_web = True
+        if not web_query:
+            web_query = _build_live_hours_query(user_message, filters, prefs)
+
     # Optional second pass with web context — only when the model asked for search
     if needs_web and web_query:
         web_context = _run_tavily(str(web_query).strip())
@@ -836,6 +988,12 @@ async def chat(
                     reply_text = enriched_data["reply"]
             except Exception:
                 pass
+        else:
+            # Keep response honest when live lookup was requested but unavailable.
+            reply_text = (
+                "I couldn't verify live opening status from web sources right now, "
+                "so here are strong options from our listings."
+            )
 
     # Do NOT merge saved preferences into filters — that caused over-filtering.
     # Preferences are applied only inside _rank_restaurants.
@@ -862,8 +1020,17 @@ async def chat(
             detail=f"Restaurant query failed: {exc}",
         )
 
+    live_hours_query = _is_live_hours_query(user_message)
+    if live_hours_query and recommendations:
+        recommendations = _prioritize_open_now(recommendations, candidates)
+
     if recommendations:
         grounded_intro = _build_grounded_intro(filters, recommendations)
+        if live_hours_query:
+            grounded_intro = (
+                "I prioritized places that appear open right now based on available hours data. "
+                + grounded_intro
+            )
         lines: List[str] = []
         for i, rec in enumerate(recommendations, 1):
             stars = f"{rec['rating']:.1f}★" if rec["rating"] else "No rating"
