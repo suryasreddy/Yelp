@@ -235,6 +235,53 @@ def _normalize_filters(filters: dict) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Occasion signal extraction
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _occasion_profile(filters: dict) -> dict:
+    """
+    Derive occasion intent from ambiance/keywords.
+    Returns {} when no clear occasion is present so normal behavior stays unchanged.
+    """
+    f = _normalize_filters(filters)
+    terms = [x.lower() for x in (f.get("ambiance") or []) + (f.get("keywords") or []) if x]
+    joined = " ".join(terms)
+
+    occasion_map = {
+        "romantic": {
+            "required_any": ["anniversary", "date night", "date", "valentine", "proposal", "romantic"],
+            "fit_terms": ["romantic", "fine dining", "upscale", "special occasion", "wine", "view", "date night"],
+            "intro": "I prioritized romantic and special-occasion options",
+        },
+        "family": {
+            "required_any": ["mother's day", "mothers day", "father's day", "fathers day", "family", "kids", "parents"],
+            "fit_terms": ["family-friendly", "casual", "brunch", "outdoor", "group-friendly"],
+            "intro": "I prioritized family-friendly, comfortable options",
+        },
+        "celebration": {
+            "required_any": ["birthday", "graduation", "celebration", "party"],
+            "fit_terms": ["special occasion", "upscale", "dessert", "group-friendly", "private dining"],
+            "intro": "I prioritized celebration-friendly places",
+        },
+        "business": {
+            "required_any": ["business dinner", "client dinner", "work dinner", "corporate"],
+            "fit_terms": ["fine dining", "upscale", "quiet", "reservations"],
+            "intro": "I prioritized business-appropriate dining options",
+        },
+    }
+
+    for label, cfg in occasion_map.items():
+        if any(t in joined for t in cfg["required_any"]):
+            return {
+                "label": label,
+                "fit_terms": cfg["fit_terms"],
+                "intro": cfg["intro"],
+            }
+    return {}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 5. Text blob for matching dietary / ambiance / keywords against a restaurant
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -341,7 +388,9 @@ def _query_restaurants(filters: dict, db: Session) -> List[models.Restaurant]:
 
     q = db.query(models.Restaurant)
 
-    if cuisine:
+    # When dietary is present, keep cuisine as a ranking priority (not hard SQL filter)
+    # so fallback can move from "Italian+vegan" to "vegan" if needed.
+    if cuisine and not dietary_strict:
         q = q.filter(models.Restaurant.cuisine_type.ilike(f"%{cuisine}%"))
 
     if location:
@@ -387,6 +436,13 @@ def _rank_restaurants(
     filters: dict,
     prefs: dict,
 ) -> List[dict]:
+    """
+    Rank with deterministic fallback tiers first, then score.
+
+    Priority examples:
+    - Italian + vegan (+ romantic) => exact combo first, then Italian+vegan, then vegan.
+    - Mexican + vegan + casual behaves the same pattern.
+    """
     f = _normalize_filters(filters)
 
     pref_cuisines = [c.lower() for c in (prefs.get("cuisines") or [])]
@@ -395,13 +451,146 @@ def _rank_restaurants(
 
     q_cuisine = (f.get("cuisine_type") or "").lower().strip()
     q_price = (f.get("price_range") or "").strip()
-    q_terms = (
-        [x.lower() for x in (f.get("keywords") or [])]
-        + [x.lower() for x in (f.get("ambiance") or [])]
-        + [x.lower() for x in (f.get("dietary") or [])]
-    )
+    q_location = (f.get("location") or "").lower().strip()
+    q_dietary = [x.lower() for x in (f.get("dietary") or [])]
+    q_ambiance = [x.lower() for x in (f.get("ambiance") or [])]
+    q_keywords = [x.lower() for x in (f.get("keywords") or [])]
+    q_terms = q_keywords + q_ambiance + q_dietary
+    occasion = _occasion_profile(f)
 
-    scored: List[tuple] = []
+    def _all_terms_match(blob: str, terms: List[str]) -> bool:
+        if not terms:
+            return False
+        return all(t in blob for t in terms if t)
+
+    def _tier_for(r: models.Restaurant) -> int:
+        """
+        Lower number = better match bucket.
+        """
+        blob = _restaurant_text_blob(r)
+        cuisine_match = bool(q_cuisine) and q_cuisine in (r.cuisine_type or "").lower()
+        dietary_match = _all_terms_match(blob, q_dietary)
+        ambience_match = _all_terms_match(blob, q_ambiance)
+        keyword_match = _all_terms_match(blob, q_keywords)
+        occasion_match = any(t in blob for t in (occasion.get("fit_terms") or [])) if occasion else False
+        if q_location:
+            city = (r.city or "").lower()
+            address = (r.address or "").lower()
+            location_match = any(
+                t.lower() in city or t.lower() in address for t in _location_tokens(q_location)
+            )
+        else:
+            location_match = True
+        secondary_match = ambience_match and keyword_match if q_ambiance and q_keywords else (ambience_match or keyword_match)
+
+        # Occasion-aware tiering when event intent exists.
+        if occasion:
+            if q_cuisine and q_dietary:
+                if cuisine_match and dietary_match and occasion_match:
+                    tier = 0
+                elif cuisine_match and dietary_match:
+                    tier = 1
+                elif dietary_match and occasion_match:
+                    tier = 2
+                elif dietary_match:
+                    tier = 3
+                elif cuisine_match and occasion_match:
+                    tier = 4
+                else:
+                    tier = 5
+                return tier if location_match else tier + 3
+
+            if q_cuisine and not q_dietary:
+                if cuisine_match and occasion_match:
+                    tier = 0
+                elif cuisine_match:
+                    tier = 1
+                elif occasion_match:
+                    tier = 2
+                elif secondary_match:
+                    tier = 3
+                else:
+                    tier = 4
+                return tier if location_match else tier + 3
+
+            if q_dietary and not q_cuisine:
+                if dietary_match and occasion_match:
+                    tier = 0
+                elif dietary_match:
+                    tier = 1
+                elif occasion_match:
+                    tier = 2
+                elif secondary_match:
+                    tier = 3
+                else:
+                    tier = 4
+                return tier if location_match else tier + 3
+
+            # Occasion-only query (e.g., Mother's Day) => occasion fit first.
+            # If both ambiance+keywords are explicitly present (e.g., "sweet and romantic"),
+            # prioritize exact combination first, then fallback intelligently.
+            if q_ambiance and q_keywords:
+                dessertish = {
+                    "sweet", "dessert", "cake", "pastry", "pastries",
+                    "bakery", "gelato", "ice cream", "chocolate"
+                }
+                keyword_food_intent = any(k in dessertish for k in q_keywords)
+                if secondary_match:
+                    tier = 0  # exact: both keyword + ambiance
+                elif keyword_match and keyword_food_intent:
+                    tier = 1  # for "sweet + romantic", prefer sweet-first fallback
+                elif occasion_match or ambience_match:
+                    tier = 2
+                elif keyword_match:
+                    tier = 3
+                else:
+                    tier = 4
+                return tier if location_match else tier + 3
+
+            tier = 0 if occasion_match else (1 if secondary_match else 2)
+            return tier if location_match else tier + 3
+
+        if q_cuisine and q_dietary:
+            if cuisine_match and dietary_match and (secondary_match or (not q_ambiance and not q_keywords)):
+                tier = 0
+            elif cuisine_match and dietary_match:
+                tier = 1
+            elif dietary_match:
+                tier = 2
+            elif cuisine_match:
+                tier = 3
+            else:
+                tier = 4
+            return tier if location_match else tier + 3
+
+        if q_cuisine and not q_dietary:
+            if cuisine_match and (secondary_match or (not q_ambiance and not q_keywords)):
+                tier = 0
+            elif cuisine_match:
+                tier = 1
+            elif secondary_match:
+                tier = 2
+            else:
+                tier = 3
+            return tier if location_match else tier + 3
+
+        if q_dietary and not q_cuisine:
+            if dietary_match and (secondary_match or (not q_ambiance and not q_keywords)):
+                tier = 0
+            elif dietary_match:
+                tier = 1
+            elif secondary_match:
+                tier = 2
+            else:
+                tier = 3
+            return tier if location_match else tier + 3
+
+        if q_ambiance or q_keywords:
+            tier = 0 if secondary_match else 1
+            return tier if location_match else tier + 3
+        return 0 if location_match else 3
+
+    ranked: List[tuple] = []
 
     for r in restaurants:
         score = 0.0
@@ -425,49 +614,48 @@ def _rank_restaurants(
         for term in q_terms:
             if term and term in text_blob:
                 score += 1.2
+        if occasion and any(t in text_blob for t in (occasion.get("fit_terms") or [])):
+            score += 2.0
 
         city = (r.city or "").lower()
-        if pref_loc and pref_loc and pref_loc in city:
+        if pref_loc and pref_loc in city:
             score += 1.5
 
-        scored.append((score, r))
+        ranked.append((_tier_for(r), score, r))
 
-    scored.sort(key=lambda x: x[0], reverse=True)
+    ranked.sort(key=lambda x: (x[0], -x[1]))
 
     results: List[dict] = []
-    for _, r in scored[:5]:
+    for tier, _, r in ranked[:5]:
         r_price = r.price_tier.value if r.price_tier else ""
         r_cuisine = r.cuisine_type or ""
         rating_val = float(r.average_rating or 0.0)
         blob = _restaurant_text_blob(r)
 
         reason_parts: List[str] = []
-        if q_cuisine and q_cuisine in (r_cuisine.lower()):
-            reason_parts.append(f"matches your {r_cuisine} search")
-        elif r_cuisine:
-            reason_parts.append(f"{r_cuisine} food")
+        if tier == 0:
+            reason_parts.append("best exact match for your request")
+        elif tier == 1:
+            reason_parts.append("strong match for your core constraints")
+        elif tier == 2:
+            reason_parts.append("matches your dietary needs")
+        elif tier == 3 and q_cuisine:
+            reason_parts.append(f"matches your {r_cuisine} preference")
+        else:
+            reason_parts.append("good fallback option")
+        if occasion and any(t in blob for t in (occasion.get("fit_terms") or [])):
+            reason_parts.append(f"fits your {occasion['label']} occasion")
 
         if q_terms:
             matched = [t for t in q_terms if t in blob]
             if matched:
                 reason_parts.append("fits " + ", ".join(matched[:3]))
-
         if r_price:
             reason_parts.append(f"{r_price} price tier")
-
         if rating_val >= 4.5:
             reason_parts.append("highly rated")
 
-        if pref_cuisines and any(c in r_cuisine for c in pref_cuisines) and not (
-            q_cuisine and q_cuisine in r_cuisine
-        ):
-            reason_parts.append("aligned with a cuisine you enjoy")
-
-        if pref_price and r_price == pref_price and q_price != pref_price:
-            reason_parts.append("matches your usual budget")
-
-        reason = "; ".join(reason_parts) if reason_parts else "Strong match for what you asked for"
-
+        reason = "; ".join(reason_parts)
         results.append(
             {
                 "id": r.id,
@@ -515,7 +703,72 @@ def _run_tavily(query: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 9. POST /ai-assistant/chat
+# 9. Grounded response intro (avoid claiming unsupported cuisine/location)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _build_grounded_intro(filters: dict, recommendations: List[dict]) -> str:
+    """
+    Build a truthful intro from actual returned rows.
+    Prevents messages like "Italian in San Francisco" when cards include other cuisines/cities.
+    """
+    if not recommendations:
+        return "I couldn't find strong matches right now, but I can refine this with another preference."
+
+    f = _normalize_filters(filters)
+    q_cuisine = (f.get("cuisine_type") or "").strip().lower()
+    q_location = (f.get("location") or "").strip().lower()
+    q_dietary = [d.lower() for d in (f.get("dietary") or []) if d]
+    occasion = _occasion_profile(f)
+
+    def _cuisine_match(rec: dict) -> bool:
+        return bool(q_cuisine) and q_cuisine in (rec.get("cuisine_type") or "").lower()
+
+    def _location_match(rec: dict) -> bool:
+        if not q_location:
+            return True
+        city = (rec.get("city") or "").lower()
+        address = (rec.get("address") or "").lower()
+        for tok in _location_tokens(q_location):
+            t = tok.lower()
+            if t in city or t in address:
+                return True
+        return False
+
+    cuisine_hits = sum(1 for r in recommendations if _cuisine_match(r))
+    location_hits = sum(1 for r in recommendations if _location_match(r))
+    n = len(recommendations)
+
+    parts: List[str] = []
+    if q_cuisine:
+        if cuisine_hits == n:
+            parts.append(f"Here are the best {q_cuisine.title()} options")
+        elif cuisine_hits > 0:
+            parts.append(f"I found a few {q_cuisine.title()} matches plus close alternatives")
+        else:
+            parts.append(f"I couldn't find strong {q_cuisine.title()} matches, so here are the closest alternatives")
+    else:
+        parts.append("Here are some strong options")
+
+    if occasion:
+        parts.append(occasion["intro"])
+
+    if q_dietary:
+        parts.append(f"with {', '.join(q_dietary)} options")
+
+    if q_location:
+        if location_hits == n:
+            parts.append(f"in {f.get('location')}")
+        elif location_hits > 0:
+            parts.append(f"mostly around {f.get('location')}")
+        else:
+            parts.append(f"nearby beyond {f.get('location')}")
+
+    return " ".join(parts).strip() + "."
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 10. POST /ai-assistant/chat
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -591,6 +844,16 @@ async def chat(
         candidates = _query_restaurants(filters, db)
         # If filters over-constrain (bad location string, etc.), still show top listings
         if not candidates:
+            fallback_filters = {
+                "cuisine_type": None,
+                "price_range": filters.get("price_range"),
+                "dietary": filters.get("dietary", []),
+                "ambiance": [],
+                "keywords": [],
+                "location": filters.get("location"),
+            }
+            candidates = _query_restaurants(fallback_filters, db)
+        if not candidates:
             candidates = _query_restaurants({}, db)
         recommendations = _rank_restaurants(candidates, filters, prefs)
     except Exception as exc:
@@ -600,6 +863,7 @@ async def chat(
         )
 
     if recommendations:
+        grounded_intro = _build_grounded_intro(filters, recommendations)
         lines: List[str] = []
         for i, rec in enumerate(recommendations, 1):
             stars = f"{rec['rating']:.1f}★" if rec["rating"] else "No rating"
@@ -607,7 +871,7 @@ async def chat(
             lines.append(
                 f"{i}. {rec['name']} ({stars}, {price}) — {rec['reason']}"
             )
-        reply_text = reply_text.rstrip() + "\n\n" + "\n".join(lines)
+        reply_text = grounded_intro + "\n\n" + "\n".join(lines)
 
     return schemas.ChatResponse(
         response=reply_text,
