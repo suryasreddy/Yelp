@@ -199,6 +199,20 @@ class ReviewOut(BaseModel):
     class Config:
         from_attributes = True
 
+class RestaurantRecommendation(BaseModel):
+    """A single restaurant card returned in the AI response."""
+    id:           Optional[int] = None
+    name:         str           = ""
+    rating:       float         = 0.0
+    price_tier:   str           = ""      # "$", "$$", "$$$", "$$$$"
+    cuisine_type: str           = ""
+    address:      str           = ""
+    city:         str           = ""
+    reason:       str           = ""      # e.g. "Italian cuisine, priced $$, highly rated"
+ 
+    class Config:
+        from_attributes = True        
+
 
 # ─── AI Chat (stub for lab partner) ──────────────────────────────────────────
 
@@ -213,8 +227,8 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    response: str
-    recommendations: Optional[List[Any]] = []
+    response:        str
+    recommendations: Optional[List[RestaurantRecommendation]] = []
 
 
 Token.model_rebuild()

@@ -11,40 +11,125 @@ const QUICK_ACTIONS = [
   'Romantic dinner',
 ];
 
-export default function ChatBot({ onClose, floating = false }) {
+const storageKey = (userId) => `chatbot_messages_${userId || 'guest'}`;
+
+const greeting = (user) => ({
+  role: 'assistant',
+  content: user
+    ? `Hi ${user.name?.split(' ')[0]}! I'm your restaurant discovery assistant. Tell me what you're in the mood for — cuisine, vibe, budget, dietary needs — and I'll suggest spots that fit.`
+    : "Hi! I'm your restaurant assistant. Log in to get personalized picks based on your saved preferences.",
+  isGreeting: true,
+});
+
+function loadStoredMessages(userId) {
+  try {
+    const saved = localStorage.getItem(storageKey(userId));
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 1) return parsed;
+    }
+  } catch (_) {}
+  return null;
+}
+
+/** Prior turns for the API — omit the template greeting message. */
+function buildConversationHistory(messages) {
+  return messages
+    .filter((m) => !m.isGreeting)
+    .map((m) => ({ role: m.role, content: m.content }));
+}
+
+function isFarewellIntent(text) {
+  const t = (text || '').toLowerCase().trim();
+  if (!t) return false;
+  const patterns = [
+    /\bbye\b/,
+    /\bgoodbye\b/,
+    /\bsee you\b/,
+    /\bsee ya\b/,
+    /\bcatch you later\b/,
+    /\bthanks,?\s*bye\b/,
+    /\bthank you,?\s*bye\b/,
+    /\bthat'?s all\b/,
+  ];
+  return patterns.some((p) => p.test(t));
+}
+
+export default function ChatBot({ onClose, floating = false, embedded = false }) {
   const { user } = useAuth();
-  const [messages, setMessages] = useState([
-    {
-      role: 'assistant',
-      content: user
-        ? `Hi ${user.name?.split(' ')[0]}! 👋 I'm your Yelp assistant. Tell me what you're craving and I'll find the perfect spot for you!`
-        : "Hi! I'm your Yelp assistant. Log in to get personalized restaurant recommendations based on your preferences!",
-    },
-  ]);
+
+  const [messages, setMessages] = useState(() => loadStoredMessages(user?.id) || [greeting(user)]);
+
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef(null);
 
   useEffect(() => {
+    try {
+      localStorage.setItem(storageKey(user?.id), JSON.stringify(messages));
+    } catch (_) {}
+  }, [messages, user?.id]);
+
+  useEffect(() => {
+    const stored = loadStoredMessages(user?.id);
+    if (stored) setMessages(stored);
+    else setMessages([greeting(user)]);
+  }, [user?.id]);
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, loading]);
+
+  const clearChat = () => {
+    const fresh = [greeting(user)];
+    setMessages(fresh);
+    try {
+      localStorage.setItem(storageKey(user?.id), JSON.stringify(fresh));
+    } catch (_) {}
+  };
 
   const sendMessage = async (text) => {
     if (!text.trim()) return;
-    if (!user) { toast.error('Please log in to use the AI assistant'); return; }
+    if (!user) {
+      toast.error('Please log in to use the AI assistant');
+      return;
+    }
 
     const userMsg = { role: 'user', content: text };
+    const history = buildConversationHistory(messages);
+    const farewell = isFarewellIntent(text);
+
     setMessages((prev) => [...prev, userMsg]);
     setInput('');
+
+    // Handle goodbye locally so we don't send "bye" to recommendation endpoint.
+    if (farewell) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: "Goodbye for now! When you're ready, I can help you find your next great meal.",
+        },
+      ]);
+      setTimeout(() => {
+        clearChat();
+        if (onClose && floating) onClose();
+      }, 6000);
+      return;
+    }
+
     setLoading(true);
 
     try {
-      const history = messages.map((m) => ({ role: m.role, content: m.content }));
-      const res = await sendChatMessage({ message: text, conversation_history: history });
+      const res = await sendChatMessage({
+        message: text,
+        conversation_history: history,
+      });
       const { response, recommendations } = res.data;
+      const recs = Array.isArray(recommendations) ? recommendations : [];
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: response, recommendations },
+        { role: 'assistant', content: response, recommendations: recs },
       ]);
     } catch (err) {
       setMessages((prev) => [
@@ -56,10 +141,17 @@ export default function ChatBot({ onClose, floating = false }) {
     }
   };
 
-  const handleSubmit = (e) => { e.preventDefault(); sendMessage(input); };
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    sendMessage(input);
+  };
 
   return (
-    <div className={`chatbot-container ${floating ? 'chatbot-floating' : ''}`}>
+    <div
+      className={`chatbot-container ${floating ? 'chatbot-floating' : ''} ${
+        embedded ? 'chatbot-embedded' : ''
+      }`}
+    >
       <div className="chatbot-header">
         <div className="chatbot-header-left">
           <div className="chatbot-avatar">🤖</div>
@@ -71,17 +163,16 @@ export default function ChatBot({ onClose, floating = false }) {
         <div className="chatbot-header-right">
           <button
             className="chatbot-clear"
-            onClick={() => setMessages([{
-              role: 'assistant',
-              content: user
-                ? `Hi ${user.name?.split(' ')[0]}! 👋 What are you in the mood for?`
-                : 'Hi! Log in for personalized recommendations.',
-            }])}
+            onClick={clearChat}
             title="New conversation"
           >
             ↺
           </button>
-          {onClose && <button className="chatbot-close" onClick={onClose}>✕</button>}
+          {onClose && (
+            <button className="chatbot-close" onClick={onClose}>
+              ✕
+            </button>
+          )}
         </div>
       </div>
 
@@ -90,18 +181,24 @@ export default function ChatBot({ onClose, floating = false }) {
           <div key={i} className={`chat-message chat-message-${msg.role}`}>
             {msg.role === 'assistant' && <div className="chat-avatar">🤖</div>}
             <div className="chat-bubble">
-              <p>{msg.content}</p>
+              <p className="chat-bubble-text">{msg.content}</p>
               {msg.recommendations?.length > 0 && (
                 <div className="chat-recommendations">
                   {msg.recommendations.map((rec, j) => (
-                    <Link to={`/restaurant/${rec.id}`} key={j} className="chat-rec-card">
+                    <Link
+                      to={`/restaurant/${rec.id}`}
+                      key={j}
+                      className="chat-rec-card"
+                    >
                       <div className="chat-rec-name">{rec.name}</div>
                       <div className="chat-rec-meta">
                         <span>⭐ {rec.rating}</span>
                         <span>{rec.price_tier}</span>
                         <span>{rec.cuisine_type}</span>
                       </div>
-                      {rec.reason && <div className="chat-rec-reason">"{rec.reason}"</div>}
+                      {rec.reason && (
+                        <div className="chat-rec-reason">"{rec.reason}"</div>
+                      )}
                     </Link>
                   ))}
                 </div>
@@ -114,11 +211,14 @@ export default function ChatBot({ onClose, floating = false }) {
             )}
           </div>
         ))}
+
         {loading && (
           <div className="chat-message chat-message-assistant">
             <div className="chat-avatar">🤖</div>
             <div className="chat-bubble chat-thinking">
-              <span></span><span></span><span></span>
+              <span></span>
+              <span></span>
+              <span></span>
             </div>
           </div>
         )}
@@ -127,13 +227,21 @@ export default function ChatBot({ onClose, floating = false }) {
 
       {!user && (
         <div className="chatbot-login-prompt">
-          <Link to="/login" className="chatbot-login-btn">Log in for personalized results</Link>
+          <Link to="/login" className="chatbot-login-btn">
+            Log in for personalized results
+          </Link>
         </div>
       )}
 
       <div className="chatbot-quick-actions">
         {QUICK_ACTIONS.map((action) => (
-          <button key={action} className="quick-action-btn" onClick={() => sendMessage(action)}>
+          <button
+            key={action}
+            type="button"
+            className="quick-action-btn"
+            disabled={loading}
+            onClick={() => sendMessage(action)}
+          >
             {action}
           </button>
         ))}
@@ -147,7 +255,11 @@ export default function ChatBot({ onClose, floating = false }) {
           placeholder="Ask me for restaurant recommendations..."
           disabled={loading}
         />
-        <button type="submit" className="chatbot-send-btn" disabled={loading || !input.trim()}>
+        <button
+          type="submit"
+          className="chatbot-send-btn"
+          disabled={loading || !input.trim()}
+        >
           ➤
         </button>
       </form>

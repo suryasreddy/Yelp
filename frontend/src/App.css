@@ -89,6 +89,41 @@ input, textarea, select { font-family: inherit; font-size: 1rem; }
 .ai-banner-btn { background: var(--yelp-orange); color: #fff; padding: 8px 18px; border-radius: 4px; font-weight: 700; font-size: 0.875rem; }
 .ai-banner-btn:hover { background: #d44e00; }
 
+.home-chat-embed-section {
+  background: linear-gradient(180deg, #fff7ed 0%, #fff 45%);
+  border-bottom: 1px solid var(--yelp-border);
+  padding: 28px 0 36px;
+}
+.home-chat-lead {
+  text-align: center;
+  margin-bottom: 20px;
+  max-width: 720px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.home-chat-sub {
+  font-size: 0.9rem;
+  color: var(--yelp-gray);
+  line-height: 1.55;
+  margin-top: 8px;
+}
+.chatbot-container.chatbot-embedded {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  height: 560px;
+  max-height: 70vh;
+}
+.chat-bubble-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+.quick-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* CATEGORIES */
 .categories-section { border-bottom: 1px solid var(--yelp-border); background: #fff; padding: 16px 0; }
 .section-inner { max-width: 1200px; margin: 0 auto; padding: 0 16px; }
