@@ -39,6 +39,22 @@ function buildConversationHistory(messages) {
     .map((m) => ({ role: m.role, content: m.content }));
 }
 
+function isFarewellIntent(text) {
+  const t = (text || '').toLowerCase().trim();
+  if (!t) return false;
+  const patterns = [
+    /\bbye\b/,
+    /\bgoodbye\b/,
+    /\bsee you\b/,
+    /\bsee ya\b/,
+    /\bcatch you later\b/,
+    /\bthanks,?\s*bye\b/,
+    /\bthank you,?\s*bye\b/,
+    /\bthat'?s all\b/,
+  ];
+  return patterns.some((p) => p.test(t));
+}
+
 export default function ChatBot({ onClose, floating = false, embedded = false }) {
   const { user } = useAuth();
 
@@ -97,6 +113,14 @@ export default function ChatBot({ onClose, floating = false, embedded = false })
         ...prev,
         { role: 'assistant', content: response, recommendations: recs },
       ]);
+
+      // Natural goodbye flow: reset chat, and close floating modal if present.
+      if (isFarewellIntent(text)) {
+        setTimeout(() => {
+          clearChat();
+          if (onClose && floating) onClose();
+        }, 1400);
+      }
     } catch (err) {
       setMessages((prev) => [
         ...prev,
