@@ -97,9 +97,27 @@ export default function ChatBot({ onClose, floating = false, embedded = false })
 
     const userMsg = { role: 'user', content: text };
     const history = buildConversationHistory(messages);
+    const farewell = isFarewellIntent(text);
 
     setMessages((prev) => [...prev, userMsg]);
     setInput('');
+
+    // Handle goodbye locally so we don't send "bye" to recommendation endpoint.
+    if (farewell) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: "Goodbye for now! When you're ready, I can help you find your next great meal.",
+        },
+      ]);
+      setTimeout(() => {
+        clearChat();
+        if (onClose && floating) onClose();
+      }, 6000);
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -113,14 +131,6 @@ export default function ChatBot({ onClose, floating = false, embedded = false })
         ...prev,
         { role: 'assistant', content: response, recommendations: recs },
       ]);
-
-      // Natural goodbye flow: reset chat, and close floating modal if present.
-      if (isFarewellIntent(text)) {
-        setTimeout(() => {
-          clearChat();
-          if (onClose && floating) onClose();
-        }, 1400);
-      }
     } catch (err) {
       setMessages((prev) => [
         ...prev,
