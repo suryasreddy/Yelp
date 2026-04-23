@@ -145,6 +145,8 @@ See `docs/jmeter-examples.md` for full steps, EKS port-forward, graphs, and repo
 
 See `docs/frontend-api-contract.md` for stable endpoint contracts and the async review flow response shapes (`202 queued` + status polling).
 
+After pulling `Shriram_Branch`, use **`docs/TEAMMATE_AFTER_PULL.md`** for install, env vars, optional Docker backend, and JMeter pointers.
+
 ## Architecture and report support
 
 - Mermaid architecture source: `docs/architecture.mmd`
