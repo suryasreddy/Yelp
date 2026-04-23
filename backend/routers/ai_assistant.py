@@ -22,7 +22,7 @@ load_dotenv()
 from fastapi import APIRouter, Depends, HTTPException, status
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
-from langchain_tavily import TavilySearch
+from langchain_community.tools.tavily_search import TavilySearchResults
 from sqlalchemy import desc, or_
 from sqlalchemy.orm import Session
 
@@ -44,11 +44,9 @@ _llm = ChatOpenAI(
 )
 
 
-def _get_tavily() -> TavilySearch:
-    return TavilySearch(
-        max_results=3,
-        tavily_api_key=os.getenv("TAVILY_API_KEY"),
-    )
+def _get_tavily() -> TavilySearchResults:
+    # Uses TAVILY_API_KEY from the environment (see module docstring). Same behavior as before.
+    return TavilySearchResults(max_results=3)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -685,11 +683,26 @@ def _run_tavily(query: str) -> str:
     try:
         tool = _get_tavily()
         raw: Any = tool.invoke({"query": query})
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except json.JSONDecodeError:
+                return raw.strip()
+        if isinstance(raw, list):
+            lines: List[str] = []
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                title = item.get("title") or ""
+                content = item.get("content") or ""
+                if title or content:
+                    lines.append(f"{title}: {content}".strip())
+            return "\n".join(lines)
         if isinstance(raw, dict):
             if raw.get("error"):
                 return ""
             items = raw.get("results") or []
-            lines: List[str] = []
+            lines = []
             for item in items:
                 if not isinstance(item, dict):
                     continue

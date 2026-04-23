@@ -15,3 +15,7 @@ frontend/.env
 
 # OS
 .DS_Store
+
+# JMeter local runs (regenerate with -e -o)
+jmeter/results/
+jmeter.log

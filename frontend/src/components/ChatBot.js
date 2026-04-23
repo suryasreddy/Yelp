@@ -62,7 +62,8 @@ export default function ChatBot({ onClose, floating = false, embedded = false })
 
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const bottomRef = useRef(null);
+  /** Scroll this panel only — avoid scrollIntoView, which also scrolls the page. */
+  const messagesRef = useRef(null);
 
   useEffect(() => {
     try {
@@ -74,10 +75,12 @@ export default function ChatBot({ onClose, floating = false, embedded = false })
     const stored = loadStoredMessages(user?.id);
     if (stored) setMessages(stored);
     else setMessages([greeting(user)]);
-  }, [user?.id]);
+  }, [user]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = messagesRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }, [messages, loading]);
 
   const clearChat = () => {
@@ -176,7 +179,7 @@ export default function ChatBot({ onClose, floating = false, embedded = false })
         </div>
       </div>
 
-      <div className="chatbot-messages">
+      <div className="chatbot-messages" ref={messagesRef}>
         {messages.map((msg, i) => (
           <div key={i} className={`chat-message chat-message-${msg.role}`}>
             {msg.role === 'assistant' && <div className="chat-avatar">🤖</div>}
@@ -222,7 +225,6 @@ export default function ChatBot({ onClose, floating = false, embedded = false })
             </div>
           </div>
         )}
-        <div ref={bottomRef} />
       </div>
 
       {!user && (

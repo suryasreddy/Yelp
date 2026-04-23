@@ -1,144 +1,105 @@
-"""
-Seed the database with demo users and 50 varied restaurants.
-Usage: python seed.py
+"""Seed MongoDB with demo users and restaurants for Lab 2."""
 
-Requires: MySQL running and .env configured.
-"""
-
-import sys
-import os
-
-sys.path.insert(0, os.path.dirname(__file__))
-
-from sqlalchemy import func
-
-from database import SessionLocal, engine, Base
-import models
+from datetime import datetime, timezone
+from database import get_mongo_db, get_next_id
 from auth import get_password_hash
 from seed_restaurants import RESTAURANTS
 
-Base.metadata.create_all(bind=engine)
 
-db = SessionLocal()
+def now():
+    return datetime.now(timezone.utc)
 
-try:
-    if db.query(models.User).count() > 0:
+
+def main():
+    db = get_mongo_db()
+    if db.users.count_documents({}) > 0:
         print("Database already seeded. Skipping.")
-        print("To add the 50-restaurant set to an existing DB, run: python seed_restaurants.py")
-        sys.exit(0)
+        return
 
-    user1 = models.User(
-        name="Alice Johnson",
-        email="alice@example.com",
-        password_hash=get_password_hash("password123"),
-        role=models.UserRole.user,
-        city="San Francisco",
-        state="CA",
-        country="United States",
-        about_me="Food lover and amateur chef!",
-    )
-    user2 = models.User(
-        name="Bob Chen",
-        email="bob@example.com",
-        password_hash=get_password_hash("password123"),
-        role=models.UserRole.user,
-        city="San Francisco",
-        state="CA",
-        country="United States",
-    )
-    owner1 = models.User(
-        name="Maria Rossi",
-        email="owner@example.com",
-        password_hash=get_password_hash("password123"),
-        role=models.UserRole.owner,
-        restaurant_location="123 Mission St, San Francisco, CA",
-        city="San Francisco",
-        state="CA",
+    user1_id = get_next_id(db, "users")
+    user2_id = get_next_id(db, "users")
+    owner_id = get_next_id(db, "users")
+    db.users.insert_many(
+        [
+            {
+                "id": user1_id,
+                "name": "Alice Johnson",
+                "email": "alice@example.com",
+                "password_hash": get_password_hash("password123"),
+                "role": "user",
+                "city": "San Francisco",
+                "state": "CA",
+                "country": "United States",
+                "about_me": "Food lover and amateur chef!",
+                "created_at": now(),
+            },
+            {
+                "id": user2_id,
+                "name": "Bob Chen",
+                "email": "bob@example.com",
+                "password_hash": get_password_hash("password123"),
+                "role": "user",
+                "city": "San Francisco",
+                "state": "CA",
+                "country": "United States",
+                "created_at": now(),
+            },
+            {
+                "id": owner_id,
+                "name": "Maria Rossi",
+                "email": "owner@example.com",
+                "password_hash": get_password_hash("password123"),
+                "role": "owner",
+                "restaurant_location": "123 Mission St, San Francisco, CA",
+                "city": "San Francisco",
+                "state": "CA",
+                "created_at": now(),
+            },
+        ]
     )
 
-    db.add_all([user1, user2, owner1])
-    db.flush()
-
-    for u in [user1, user2, owner1]:
-        db.add(
-            models.UserPreferences(
-                user_id=u.id,
-                cuisine_preferences=["Italian", "Mexican"],
-                price_range="$$",
-                dietary_needs=[],
-                ambiance_preferences=["Casual"],
-                sort_preference="rating",
-            )
+    for uid in [user1_id, user2_id, owner_id]:
+        db.user_preferences.insert_one(
+            {
+                "user_id": uid,
+                "cuisine_preferences": ["Italian", "Mexican"],
+                "price_range": "$$",
+                "dietary_needs": [],
+                "ambiance_preferences": ["Casual"],
+                "sort_preference": "rating",
+                "search_radius": 10,
+            }
         )
 
-    restaurant_objs = []
+    restaurant_docs = []
     for data in RESTAURANTS:
-        r = models.Restaurant(**data, added_by=user1.id)
-        db.add(r)
-        restaurant_objs.append(r)
+        rid = get_next_id(db, "restaurants")
+        row = {
+            "id": rid,
+            **data,
+            "photos": [],
+            "average_rating": 0.0,
+            "review_count": 0,
+            "is_claimed": False,
+            "claimed_by": None,
+            "added_by": user1_id,
+            "created_at": now(),
+        }
+        restaurant_docs.append(row)
+    if restaurant_docs:
+        restaurant_docs[0]["is_claimed"] = True
+        restaurant_docs[0]["claimed_by"] = owner_id
+    db.restaurants.insert_many(restaurant_docs)
 
-    db.flush()
+    db.favorites.insert_one({"user_id": user1_id, "restaurant_id": restaurant_docs[2]["id"], "created_at": now()})
+    db.favorites.insert_one({"user_id": user1_id, "restaurant_id": restaurant_docs[25]["id"], "created_at": now()})
+    db.favorites.insert_one({"user_id": user2_id, "restaurant_id": restaurant_docs[0]["id"], "created_at": now()})
 
-    restaurant_objs[0].is_claimed = True
-    restaurant_objs[0].claimed_by = owner1.id
+    print("Seeded MongoDB successfully.")
+    print("User:  alice@example.com / password123")
+    print("User:  bob@example.com / password123")
+    print("Owner: owner@example.com / password123")
 
-    # Two short review templates per slot — rotate so every place has 1–2 reviews
-    snippets = [
-        "Really enjoyed our meal here. Would recommend.",
-        "Great flavors and friendly staff.",
-        "Solid choice in the neighborhood.",
-        "Worth the price — we'll be back.",
-        "Perfect for a casual night out.",
-        "Impressive quality and atmosphere.",
-    ]
 
-    for i, r in enumerate(restaurant_objs):
-        c1 = f"{snippets[i % len(snippets)]} {r.name} hits the spot."
-        db.add(
-            models.Review(
-                user_id=user1.id,
-                restaurant_id=r.id,
-                rating=5 if i % 4 != 0 else 4,
-                comment=c1,
-            )
-        )
-        if i % 2 == 0:
-            c2 = f"Second visit — still consistent. Love the {r.cuisine_type or 'food'} here."
-            db.add(
-                models.Review(
-                    user_id=user2.id,
-                    restaurant_id=r.id,
-                    rating=4 if i % 3 != 0 else 5,
-                    comment=c2,
-                )
-            )
-
-    db.flush()
-
-    for r in restaurant_objs:
-        result = (
-            db.query(func.avg(models.Review.rating), func.count(models.Review.id))
-            .filter(models.Review.restaurant_id == r.id)
-            .first()
-        )
-        r.average_rating = round(float(result[0] or 0), 2)
-        r.review_count = result[1] or 0
-
-    db.add(models.Favorite(user_id=user1.id, restaurant_id=restaurant_objs[2].id))
-    db.add(models.Favorite(user_id=user1.id, restaurant_id=restaurant_objs[25].id))
-    db.add(models.Favorite(user_id=user2.id, restaurant_id=restaurant_objs[0].id))
-
-    db.commit()
-    print("✅ Database seeded successfully!")
-    print(f"   Loaded {len(RESTAURANTS)} restaurants across SF, Oakland, Berkeley, San Jose, Palo Alto.")
-    print("\nSample accounts:")
-    print("  User:  alice@example.com  / password123")
-    print("  User:  bob@example.com    / password123")
-    print("  Owner: owner@example.com  / password123")
-
-except Exception as e:
-    db.rollback()
-    print(f"❌ Error seeding database: {e}")
-    raise
-finally:
-    db.close()
+if __name__ == "__main__":
+    main()

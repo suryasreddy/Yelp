@@ -1,0 +1,26 @@
+flowchart LR
+    FE[Frontend / JMeter clients]
+    UR[User Reviewer Service]
+    RS[Restaurant Service]
+    OS[Restaurant Owner Service]
+    REV[Review Service Producer API]
+    K[(Kafka Broker)]
+    W[Review Worker Consumer]
+    MDB[(MongoDB)]
+
+    FE --> UR
+    FE --> RS
+    FE --> OS
+    FE --> REV
+
+    UR -->|user.created user.updated| K
+    RS -->|restaurant.created restaurant.updated restaurant.claimed| K
+    REV -->|review.created review.updated review.deleted| K
+
+    K --> W
+    W --> MDB
+
+    UR --> MDB
+    RS --> MDB
+    OS --> MDB
+    REV --> MDB

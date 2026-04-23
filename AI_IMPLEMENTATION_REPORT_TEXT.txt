@@ -1,0 +1,111 @@
+AI Assistant Chatbot Implementation (Demo-Ready)
+
+1) Brief: How the chatbot works
+The chatbot UI (React) sends every user message to the backend endpoint `POST /ai-assistant/chat` along with `conversation_history`.
+On the backend, the system:
+- Loads the logged-in user’s saved preferences (from `user_preferences`) to personalize ranking.
+- Builds a strict “JSON output” system prompt for the LLM so the model returns structured intent:
+  `filters` (cuisine/dietary/ambiance/keywords/location/price_range), `needs_web_search`, and a final `reply` string.
+- Rebuilds context for multi-turn conversations by sending prior turns (excluding the initial greeting template).
+- Parses and normalizes the model’s JSON, then queries the MySQL database with controlled filtering:
+  - `dietary` is treated as a hard constraint for results.
+  - `cuisine` / `keywords` / `ambiance` are used as soft signals for ranking boosts.
+  - Location inputs are tokenized (e.g., “San Francisco, CA”).
+- Ranks results deterministically using a tier-based matcher and generates a grounded intro based on what was actually returned.
+- If `needs_web_search` is true (or the user asks for “open now” intent), the backend enriches context:
+  - “open now” is prioritized deterministically from stored restaurant `hours` data.
+Finally, the backend returns:
+`ChatResponse = { response: string, recommendations: RestaurantRecommendation[] }`
+The UI renders `recommendations` as clickable cards that route to `/restaurant/:id`.
+
+2) Main code files you should know
+- `backend/routers/ai_assistant.py`
+  - `chat()` endpoint (orchestrates the whole pipeline)
+  - LLM prompt + parsing helpers
+  - DB querying + deterministic ranking helpers (including “open now”)
+- `backend/schemas.py`
+  - `ChatRequest`, `ChatResponse`, `RestaurantRecommendation` (API contract)
+- `frontend/src/components/ChatBot.js`
+  - Chat state + persistence
+  - `sendMessage()` (frontend → backend call)
+  - conversation history building + farewell handling
+  - Rendering recommendation cards and the “thinking” indicator
+- `frontend/src/api/index.js`
+  - `sendChatMessage()` wrapper that calls `POST /ai-assistant/chat`
+- `frontend/src/pages/HomePage.js`
+  - Embeds the chatbot prominently on the home/dashboard area
+
+3) Key functions / logic blocks to remember (backend)
+In `backend/routers/ai_assistant.py`, the important parts are:
+- `_build_system_prompt(...)`
+  - Forces the LLM to output strict JSON fields.
+  - Instructs multi-turn behavior (merge with prior turns).
+  - Sets `needs_web_search` behavior rules.
+- `build conversation context`
+  - Builds LangChain messages from `conversation_history` + the current message.
+- `_parse_llm_output(...)` and `_normalize_filters(...)`
+  - Safely extracts JSON from the LLM output and normalizes filter values.
+- `_query_restaurants(filters, db)` and fallback query logic
+  - Controlled filtering to avoid empty results for generic prompts.
+- `_rank_restaurants(...)`
+  - Deterministic ranking based on intent match quality + profile boosts.
+  - Uses tiering (via `_tier_for(...)`) and occasion awareness when present.
+- `_location_tokens(...)` / `_apply_location_filter(...)`
+  - Tokenizes location strings and matches across `city/address/state/zip_code`.
+- “open now” / live-hours logic
+  - `_is_live_hours_query(message)` detects “open right now” intent.
+  - `_is_open_now_from_hours(...)` reads restaurant `hours` JSON and checks current time.
+  - `_prioritize_open_now(...)` reorders recommendations so currently open places appear first.
+- `_build_grounded_intro(...)`
+  - Generates the intro text based on the actual returned recommendations (prevents misleading claims).
+
+4) Key functions / logic blocks to remember (frontend)
+In `frontend/src/components/ChatBot.js`:
+- `messages` state + `localStorage`
+  - Chat history persists under a user-specific key `chatbot_messages_<userId|guest>`.
+- `greeting(user)` with `isGreeting: true`
+  - The initial template message is not sent back to the LLM as history.
+- `buildConversationHistory(messages)`
+  - Filters out `isGreeting` items and maps turns into `{role, content}` for the backend.
+- `sendMessage(text)`
+  - Adds the user message to the UI immediately.
+  - Shows the “thinking” indicator while waiting for the API.
+  - Calls `sendChatMessage({ message, conversation_history })`.
+  - Appends the assistant message + `recommendations` when the response arrives.
+- Farewell handling (`isFarewellIntent`)
+  - “bye/goodbye” is handled locally to avoid sending farewell text to the recommendation endpoint.
+  - Then clears/close the chat after a short delay for natural UX.
+- Recommendation cards
+  - Each card is a `Link` to `/restaurant/${rec.id}`.
+
+5) “Remember these points” (for demo questions)
+- Preferences personalize ranking; they are not blindly injected as hard SQL filters.
+- `dietary` is strict; `cuisine/keywords/ambiance` are soft boosts (prevents empty results).
+- Multi-turn works because the frontend sends `conversation_history` each time.
+- The LLM is constrained to output structured JSON; the backend is deterministic about ranking/fallbacks.
+- “open now” is handled deterministically from the database `hours` and then recommendations are reordered.
+- The chatbot’s intro text is grounded using the actual returned restaurant cards.
+- Clicking cards routes correctly to `/restaurant/:id`.
+- Chat persists via `localStorage` and is reset only on explicit clear/farewell behavior.
+
+6) Demo-ready flow (what to say during presentation)
+Step 1: Generic discovery
+- You: “I’m hungry—what do you recommend?”
+- Expect: cards appear immediately with ranked candidates (broad retrieval + ranking).
+
+Step 2: Add constraints
+- You: “Make it vegan and Mexican.”
+- Expect: refined ordering where vegan-compatible places rank higher; reasons explain matches.
+
+Step 3: Add an occasion + vibe
+- You: “Something sweet and romantic.”
+- Expect: priority for “sweet” + “romantic” combinations via tiering/ranking logic.
+
+Step 4: Live-hours intent
+- You: “What’s open right now in San Francisco?”
+- Expect: recommendations are prioritized using stored `hours` logic (open-now first).
+
+Step 5: End conversation naturally
+- You: “Thanks, bye.”
+- Expect: local farewell, then the chat clears/closes after a short delay.
+

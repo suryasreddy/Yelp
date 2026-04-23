@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-api
+  namespace: yelp-lab2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend-api
+  template:
+    metadata:
+      labels:
+        app: backend-api
+    spec:
+      containers:
+        - name: app
+          image: 393565237340.dkr.ecr.us-west-2.amazonaws.com/yelp-backend-api:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: yelp-lab2-config
+            - secretRef:
+                name: yelp-lab2-secrets
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-api
+  namespace: yelp-lab2
+spec:
+  selector:
+    app: backend-api
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: review-worker
+  namespace: yelp-lab2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: review-worker
+  template:
+    metadata:
+      labels:
+        app: review-worker
+    spec:
+      containers:
+        - name: worker
+          image: 393565237340.dkr.ecr.us-west-2.amazonaws.com/yelp-review-worker:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "review_worker.py"]
+          envFrom:
+            - configMapRef:
+                name: yelp-lab2-config
+            - secretRef:
+                name: yelp-lab2-secrets
