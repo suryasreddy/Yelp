@@ -1,0 +1,86 @@
+Create a clean, professional architecture diagram for a Yelp-style AI Assistant chatbot system.
+
+Style requirements:
+- Modern SaaS architecture style
+- White background, subtle shadows, rounded cards
+- Color-coded layers:
+  - Frontend: light blue
+  - Backend/API: light orange
+  - AI/LLM services: light purple
+  - Database/Storage: light green
+  - External services: light yellow
+- Use arrows with labels for data flow
+- Include numbered flow steps
+- Add a small legend
+
+Title:
+"AI Assistant Chatbot Architecture (React + FastAPI + LangChain + MySQL)"
+
+Main blocks to include:
+
+1) Frontend Layer (React)
+- ChatBot Component (ChatBot.js)
+- HomePage Integration (HomePage.js)
+- API Client (sendChatMessage in api/index.js)
+- AuthContext (JWT token from localStorage)
+- LocalStorage (chat history persistence)
+
+2) API Layer (FastAPI)
+- Endpoint: POST /ai-assistant/chat
+- Auth dependency: get_current_user (JWT decode)
+- Request schema: ChatRequest
+- Response schema: ChatResponse + RestaurantRecommendation[]
+
+3) AI Orchestration Layer (ai_assistant.py)
+- _load_preferences(user_id, db)
+- _build_system_prompt(prefs, user)
+- _build_lc_messages(history + current_message)
+- LLM invoke (ChatOpenAI gpt-4o-mini)
+- _parse_llm_output + _normalize_filters
+- Optional web step: _run_tavily(query) when needs_web_search=true
+- _query_restaurants(filters, db)
+- _rank_restaurants(restaurants, filters, prefs)
+- _build_grounded_intro(filters, recommendations)
+- Return final structured response
+
+4) Data Layer (MySQL via SQLAlchemy)
+- users
+- user_preferences
+- restaurants
+- reviews
+- favorites
+
+5) External Services
+- OpenAI API (LangChain ChatOpenAI)
+- Tavily Search API (live context for open-now/trending/special events)
+
+Flow arrows (must be shown in order):
+
+Flow 1 (Chat request):
+1. User enters message in ChatBot UI
+2. Frontend sends POST /ai-assistant/chat with message + conversation_history + Bearer token
+3. FastAPI authenticates user and loads preferences
+4. Backend builds prompt and calls LLM
+5. LLM returns structured JSON filters
+6. Backend queries MySQL and ranks recommendations
+7. Optional Tavily enrichment if live data is needed
+8. Backend returns response + recommendations[]
+9. Frontend renders conversational text + clickable restaurant cards
+10. Frontend stores updated chat in localStorage
+
+Flow 2 (Multi-turn):
+- conversation_history from frontend is appended each request
+- backend reinterprets full intent each turn (refinement support)
+
+Flow 3 (Fallback/Robustness):
+- If filters over-constrain results, fallback query path broadens candidates
+- Grounded intro ensures response text matches actual returned cards
+
+Annotate key architectural principles:
+- "LLM for interpretation, deterministic ranking for control"
+- "Preferences are ranking boosts, not blind hard filters"
+- "Structured API contract via schemas"
+- "Occasion-aware and multi-turn recommendation refinement"
+
+Output format:
+- One complete architecture diagram suitable for academic report and viva presentation.

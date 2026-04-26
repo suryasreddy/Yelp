@@ -1,116 +1,154 @@
-# Yelp Prototype: DATA 228 Lab 1
-## Instructions to Run:
+# Yelp Distributed Systems Labs
 
-## Prerequisites
-- Python 3.11+
-- Node.js 18+ and npm
-- MySQL 8+
+Lab 2 is implemented as an extension of the existing Lab 1 backend code under `backend/`.
 
----
+## Lab 2 backend shape (Person A)
 
-## Step 1 — Clone the Repository
+- `backend-api` (existing FastAPI app now using MongoDB + Kafka-backed review flow)
+- `review-worker` (Kafka consumer applying review create/update/delete events)
 
-```bash
-git clone https://github.com/suryasreddy/Yelp.git
-cd Yelp
-```
+### Lab 2 Part 1.1 — one Dockerfile per named service
 
----
+The assignment lists four backend services; each has its own Dockerfile under `backend/`:
 
-## Step 2 — Create the MySQL Database
+| Service (PDF) | Dockerfile | Runtime |
+|----------------|------------|---------|
+| User / Reviewer | `Dockerfile.user-reviewer-service` | FastAPI (`uvicorn`) — used by Compose as `backend-api` |
+| Restaurant Owner | `Dockerfile.restaurant-owner-service` | Same app image (monolith); satisfies rubric file |
+| Restaurant | `Dockerfile.restaurant-service` | Same app image (monolith); satisfies rubric file |
+| Review | `Dockerfile.review-service` | `review_worker.py` consumer — used by Compose as `review-worker` |
 
-Open **MySQL Workbench** and run:
+Locally you run **one** API container plus the **review worker**; the other two API Dockerfiles match the integrated Lab 1 codebase and are used for builds, reports, and ECR tags if you want four image names.
 
-```sql
-CREATE DATABASE yelp_db 
-CHARACTER SET utf8mb4 
-COLLATE utf8mb4_unicode_ci;
-```
+Kafka topics used:
+- required: `review.created`, `review.updated`, `review.deleted`
 
----
+## Environment variables
 
-## Step 3 — Create the `.env` File
-
-Create a file called `.env` inside the `backend/` folder:
-
-```env
-DATABASE_URL=mysql+pymysql://root:YOUR_MYSQL_PASSWORD@localhost:3306/yelp_db
-SECRET_KEY=supersecretkey123456789
-ACCESS_TOKEN_EXPIRE_MINUTES=1440
-UPLOAD_DIR=uploads
-OPENAI_API_KEY=your-openai-api-key
-TAVILY_API_KEY=your-tavily-api-key
-```
-
----
-
-## Step 4 — Backend Setup
+Copy `.env.example` to `.env`:
 
 ```bash
-cd backend
-
-python3.11 -m venv venv
-
-source venv/bin/activate
-
-pip install -r requirements.txt
-pip install bcrypt==4.0.1
-pip install langchain-openai --upgrade
-pip install langchain-community --upgrade
+cp .env.example .env
 ```
 
----
+Required vars are documented in `.env.example`.
 
-## Step 5 — Start the Backend
+## Run locally with Docker Compose
+
+From repository root:
 
 ```bash
-python -m uvicorn main:app --port 8000
+docker compose up --build -d
+docker compose ps
+./scripts/create_kafka_topics.sh
 ```
 
----
+Health checks:
 
-## Step 6 — Seed the Database
+```bash
+curl http://localhost:8000/health
+```
 
-Open a **new terminal**:
+Seed demo data:
+
+```bash
+docker compose exec backend-api python seed.py
+```
+
+Migrate Lab 1 MySQL data to MongoDB (when needed):
 
 ```bash
 cd backend
-
 source venv/bin/activate
-
-python seed.py
+python migrate_mysql_to_mongo.py --reset
 ```
 
----
-
-## Step 7 — Frontend Setup
-
-Open a **new terminal**:
+If script path is unavailable in container, run seed from host with Python and matching env:
 
 ```bash
-cd frontend
-
-npm install
-
-echo "REACT_APP_API_URL=http://localhost:8000" > .env
-
-npm start
+PYTHONPATH=. python scripts/seed_lab2_data.py
 ```
 
----
+## Build and push images for Kubernetes
 
-## App URLs
+Update image names in `k8s/backend-services.yaml` first, then build **from the Lab 2 Dockerfiles** (replace `<registry>` with your ECR base, e.g. `393565237340.dkr.ecr.us-west-2.amazonaws.com`).
 
-- **Frontend:** http://localhost:3000  
-- **API Docs:** http://localhost:8000/docs  
+**Minimum for this repo’s manifests** (API + worker):
 
----
+```bash
+docker buildx build --platform linux/amd64 -f backend/Dockerfile.user-reviewer-service -t <registry>/yelp-backend-api:latest --push .
+docker buildx build --platform linux/amd64 -f backend/Dockerfile.review-service -t <registry>/yelp-review-worker:latest --push .
+```
 
-## Test Accounts
+**All four service images** (for strict rubric / screenshots):
 
-| Email | Password | Role |
-|------|----------|------|
-| alice@example.com | password123 | Reviewer |
-| bob@example.com | password123 | Reviewer |
-| sofia@example.com | password123 | Reviewer |
-| owner@example.com | password123 | Owner |
+```bash
+docker buildx build --platform linux/amd64 -f backend/Dockerfile.user-reviewer-service -t <registry>/yelp-user-reviewer-service:latest --push .
+docker buildx build --platform linux/amd64 -f backend/Dockerfile.restaurant-owner-service -t <registry>/yelp-restaurant-owner-service:latest --push .
+docker buildx build --platform linux/amd64 -f backend/Dockerfile.restaurant-service -t <registry>/yelp-restaurant-service:latest --push .
+docker buildx build --platform linux/amd64 -f backend/Dockerfile.review-service -t <registry>/yelp-review-service:latest --push .
+```
+
+Use `yelp-backend-api` / `yelp-review-worker` tags for `k8s/backend-services.yaml` as written, or retag any of the first three API builds as `yelp-backend-api` (they are the same application).
+
+## Kubernetes deployment
+
+Apply in order:
+
+```bash
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/configmap.yaml
+kubectl apply -f k8s/secrets.example.yaml
+kubectl apply -f k8s/mongodb.yaml
+kubectl apply -f k8s/zookeeper.yaml
+kubectl apply -f k8s/kafka.yaml
+kubectl apply -f k8s/backend-services.yaml
+```
+
+Verify:
+
+```bash
+kubectl get pods -n yelp-lab2
+kubectl get svc -n yelp-lab2
+kubectl logs -n yelp-lab2 deploy/review-worker --tail=100
+```
+
+Port-forward for local checks:
+
+```bash
+kubectl port-forward -n yelp-lab2 svc/backend-api 8000:8000
+```
+
+## Kafka verification commands
+
+List topics:
+
+```bash
+docker compose exec kafka kafka-topics --bootstrap-server kafka:9092 --list
+```
+
+Consume review topic for debugging:
+
+```bash
+docker compose exec kafka kafka-console-consumer --bootstrap-server kafka:9092 --topic review.created --from-beginning --timeout-ms 10000
+```
+
+## JMeter support (Lab 2 Part 5)
+
+- Test plan: `jmeter/lab2_backend.jmx` (login → search → review with per-thread CSV user)
+- User CSV generator: `scripts/jmeter_prepare_load_users.py`
+- Concurrency sweep (100–500 users): `scripts/run_jmeter_concurrency_sweep.sh`
+
+See `docs/jmeter-examples.md` for full steps, EKS port-forward, graphs, and report wording.
+
+## Frontend integration note (Person B)
+
+See `docs/frontend-api-contract.md` for stable endpoint contracts and the async review flow response shapes (`202 queued` + status polling).
+
+After pulling `Shriram_Branch`, use **`docs/TEAMMATE_AFTER_PULL.md`** for install, env vars, optional Docker backend, and JMeter pointers.
+
+## Architecture and report support
+
+- Mermaid architecture source: `docs/architecture.mmd`
+- MongoDB collection design: `docs/mongodb-schema.md`
+- AWS screenshot/verification checklist: `docs/aws-verification.md`

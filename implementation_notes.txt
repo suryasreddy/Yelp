@@ -1,0 +1,239 @@
+README.md
+Updated the project overview to separate Lab 1 monolith and Lab 2 Person A stack.
+Added docker-compose, Kubernetes, Kafka verification, seeding, and image build/push runbooks.
+This works as the main operator guide so evaluators can run infra/services in correct order.
+It ties all new files together and explains how to validate health, topics, and async flow.
+
+.env.example
+Created a template for MongoDB, JWT, session expiry, and Kafka service variables.
+Removed the need for hardcoded runtime values inside service code or manifests.
+This works by being copied to `.env` and loaded by Docker Compose services at startup.
+It enables identical config keys across local containers and Kubernetes ConfigMap/Secret.
+
+docker-compose.yml
+Created a full local stack with Zookeeper, Kafka, MongoDB, 4 API services, and review worker.
+Added dependency conditions and healthchecks so startup order is more reliable for demos.
+This works by exposing service ports and using compose DNS names for internal communication.
+It gives a one-command local environment for API testing and JMeter preparation.
+
+services/requirements.txt
+Added shared Python dependencies for all Lab 2 services and worker.
+Included FastAPI, pymongo, jose, passlib+bcrypt, and kafka-python libraries.
+This works as the single dependency lock for service container builds.
+It keeps service Dockerfiles simple and consistent across all backend components.
+
+services/shared/__init__.py
+Created package marker for shared reusable Lab 2 modules.
+Ensures Python recognizes `services.shared` imports in all service apps.
+This works by enabling module resolution with `PYTHONPATH=/app`.
+It avoids duplicate code for auth, config, mongo, schemas, and Kafka wrappers.
+
+services/shared/config.py
+Created centralized settings loader for Mongo, JWT, session, and Kafka env vars.
+Defined defaults suitable for compose/Kubernetes service names.
+This works by giving every service the same runtime config contract.
+It prevents scattered hardcoded hostnames and makes deployment updates predictable.
+
+services/shared/mongo.py
+Implemented Mongo connection reuse and lazy DB initialization.
+Added required indexes (email uniqueness, review uniqueness, session TTL, search fields).
+This works by calling `get_db()` from services to reuse one client and ensure indexes exist.
+It enforces session expiry and common query performance for login/search/review paths.
+
+services/shared/security.py
+Implemented bcrypt password hashing and verification helpers.
+Implemented JWT creation plus Mongo-backed session document creation and validation.
+This works by issuing token with `sid` and checking it against `sessions` collection.
+It gives secure password storage and revocable/expiring sessions in MongoDB.
+
+services/shared/http_auth.py
+Implemented Bearer-token request authentication for new service endpoints.
+Added user lookup and minimal user response sanitizer helper.
+This works by decoding token, validating session record, then loading Mongo user.
+It standardizes auth checks without reimplementing token logic per service.
+
+services/shared/kafka_bus.py
+Implemented shared Kafka producer wrapper with JSON serialization and retries.
+Added structured event envelope (type, timestamp, correlation_id, actor, entity, payload).
+This works by publishing to topic and waiting for broker acknowledgement.
+It ensures review/user/restaurant producer events have consistent metadata.
+
+services/shared/schemas.py
+Added Pydantic schemas for auth, preferences, restaurant, and review payload validation.
+Kept field naming similar to Lab 1 contracts to reduce frontend incompatibility risk.
+This works by validating request payloads before service business logic executes.
+It prevents malformed writes and enforces constraints like password/rating ranges.
+
+services/user_reviewer_service/__init__.py
+Created package marker for the user/reviewer service module.
+Supports clean module import path in uvicorn app startup.
+This works with Docker `CMD uvicorn services.user_reviewer_service.app:app`.
+It ensures service code remains organized as an importable package.
+
+services/user_reviewer_service/app.py
+Created service endpoints for signup, login, profile, preferences, and history.
+Migrated auth/session persistence to Mongo with bcrypt and TTL-backed sessions.
+This works by writing users/preferences/activity logs and returning JWT session token.
+It also publishes `user.created` and `user.updated` events for Kafka-based architecture.
+
+services/user_reviewer_service/Dockerfile
+Created dedicated container image build for user/reviewer service on port 8001.
+Installs shared requirements and copies service + scripts into image.
+This works by launching uvicorn with the service module entrypoint.
+It provides isolated deployable runtime for Person A service-splitting requirement.
+
+services/restaurant_service/__init__.py
+Created package marker for restaurant service module.
+Enables importable path used by uvicorn in container startup.
+This works with shared package layout and `PYTHONPATH=/app`.
+It keeps service boundaries explicit and deployment-friendly.
+
+services/restaurant_service/app.py
+Created restaurant search/create/get/update/claim endpoints using MongoDB.
+Implemented query filtering/sorting for JMeter-ready restaurant search tests.
+This works by querying `restaurants` collection and returning normalized response docs.
+It publishes restaurant topic events to Kafka for architecture completeness.
+
+services/restaurant_service/Dockerfile
+Created dedicated container image build for restaurant service on port 8002.
+Reuses shared dependency file and copies all service modules.
+This works by starting uvicorn app for independent scaling/deployment.
+It fulfills per-backend-service Dockerization requirement from rubric.
+
+services/restaurant_owner_service/__init__.py
+Created package marker for owner service module.
+Enables proper module import path for uvicorn entrypoint.
+This works as part of package structure consistency across services.
+It isolates owner-specific logic from other API services.
+
+services/restaurant_owner_service/app.py
+Created owner-only endpoints for dashboard, claimed restaurants, and restaurant reviews.
+Added role gate to enforce owner access from JWT-authenticated user context.
+This works by aggregating Mongo restaurant/review docs into dashboard metrics.
+It preserves Lab 1 owner features in separated service boundary.
+
+services/restaurant_owner_service/Dockerfile
+Created dedicated container image build for owner service on port 8003.
+Uses same dependency and shared-module pattern as other services.
+This works by running owner service independently in compose/k8s.
+It maps directly to “Restaurant Owner Service” requirement in assignment.
+
+services/review_service/__init__.py
+Created package marker for review service module.
+Keeps review API import path stable for uvicorn startup.
+This works with modular service folder convention in Lab 2.
+It prepares review endpoints to be isolated producer-facing API surface.
+
+services/review_service/app.py
+Created review list/create/update/delete endpoints with asynchronous Kafka publishing.
+Changed write behavior to queue events and return 202 queued responses.
+This works by publishing `review.created|updated|deleted` and logging queued status.
+It satisfies rubric requirement that review flow goes through Kafka producer/consumer path.
+
+services/review_service/Dockerfile
+Created dedicated container image build for review service on port 8004.
+Sets service module as uvicorn target for standalone deployment.
+This works by isolating review API from worker write-processing.
+It supports scaling API and worker separately in Kubernetes.
+
+services/review_worker/__init__.py
+Created package marker for review worker module.
+Allows `python -m services.review_worker.worker` execution in container.
+This works with package layout and shared imports.
+It keeps consumer logic decoupled from API runtime process.
+
+services/review_worker/worker.py
+Created Kafka consumer subscribing to review topics and applying writes to MongoDB.
+Implemented idempotent-ish create handling plus update/delete with rating recalculation.
+This works by consuming events, updating `reviews`, then recomputing restaurant aggregates.
+It writes processed/failed status to activity logs for operational traceability.
+
+services/review_worker/Dockerfile
+Created dedicated worker container image (no public port) for Kafka consumption.
+Builds shared code and runs module entrypoint command.
+This works as a long-running background consumer service.
+It completes required producer/consumer architecture in deployment stack.
+
+k8s/namespace.yaml
+Created dedicated Kubernetes namespace `yelp-lab2`.
+Separates Lab 2 resources from any default or unrelated cluster workloads.
+This works by scoping all objects under a single namespace label.
+It simplifies cleanup, verification commands, and screenshot consistency.
+
+k8s/configmap.yaml
+Created ConfigMap containing non-secret runtime environment values.
+Includes Mongo URL/DB, Kafka bootstrap servers, and session config values.
+This works via `envFrom` in backend deployments.
+It centralizes deploy-time configuration without rebuilding images.
+
+k8s/secrets.example.yaml
+Created example Secret manifest for JWT secret material.
+Avoids committing real secrets while documenting required keys.
+This works when copied/edited/applied before backend deployments.
+It satisfies secure secret wiring expectation for practical cloud deployment.
+
+k8s/mongodb.yaml
+Created MongoDB Deployment + ClusterIP Service manifests.
+Provides in-cluster Mongo endpoint `mongodb:27017` for service connectivity.
+This works by running database pod and exposing internal DNS service.
+It is the persistence layer replacing Lab 1 MySQL for Lab 2 stack.
+
+k8s/zookeeper.yaml
+Created Zookeeper Deployment + Service for Kafka dependency.
+Keeps setup simple and compatible with cp-kafka single-broker configuration.
+This works by exposing `zookeeper:2181` inside namespace.
+It is required for the selected Kafka image and setup model.
+
+k8s/kafka.yaml
+Created Kafka Deployment + ClusterIP Service in namespace.
+Configured listeners/advertised listener for internal cluster communication.
+This works by exposing broker at `kafka:9092` to API services and worker.
+It enables required event topics for asynchronous review architecture.
+
+k8s/backend-services.yaml
+Created Deployments + Services for user, restaurant, owner, review API, and review worker.
+Connected each workload to ConfigMap and Secret through `envFrom`.
+This works by giving each service stable DNS and isolated pod lifecycle.
+It fulfills explicit requirement to deploy backend services in Kubernetes.
+
+k8s/deploy.sh
+Added script to apply manifests in correct order and print verification output.
+Automates namespace/config/infra/backend rollout steps for reproducibility.
+This works as a quick bootstrap command for local or AWS cluster setup.
+It reduces manual mistakes during report/demo deployment sequence.
+
+scripts/seed_lab2_data.py
+Created Mongo seed script for demo users, preferences, and restaurants.
+Uses bcrypt hashing and UUID ids compatible with new service expectations.
+This works by preparing known login credentials and searchable restaurant data.
+It enables clean JMeter setup without manual DB insertion.
+
+scripts/create_kafka_topics.sh
+Created helper script to create required and scaffold Kafka topics in compose setup.
+Includes mandatory review topics plus user/restaurant/booking scaffold topics.
+This works by calling kafka CLI inside running kafka container.
+It ensures topic availability before load tests or API event publishing.
+
+docs/architecture.mmd
+Created Mermaid architecture source for report-ready diagram generation.
+Shows producers (API services), Kafka topics, consumer worker, and MongoDB flow.
+This works as a reusable diagram source for README/report exports.
+It directly supports assignment architecture-diagram documentation requirement.
+
+docs/mongodb-schema.md
+Created MongoDB collection and key-field documentation for Lab 2 design.
+Documents users, sessions, preferences, restaurants, reviews, favourites, activity logs.
+This works as schema reference for grading and team coordination.
+It explains indexes and TTL behavior needed for performance/security requirements.
+
+docs/aws-verification.md
+Created command-driven checklist for required AWS/Kubernetes proof screenshots.
+Covers pods/services, Kafka topic checks, endpoint health, and async review proof.
+This works as a report execution guide to avoid missing rubric evidence.
+It tells exactly what terminal outputs/screens should be captured.
+
+docs/jmeter-examples.md
+Created endpoint-specific JMeter support doc for login/search/review flows.
+Includes URLs, payloads, auth headers, execution order, and CSV parameterization notes.
+This works as a plug-in reference for Person B test plans and your execution.
+It links review submission testing to Kafka-backed asynchronous behavior.

@@ -1,102 +1,69 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from sqlalchemy import func
 from typing import List
 from database import get_db
-import models, schemas
+import schemas
 from auth import get_current_user
 
 router = APIRouter(prefix="/owner", tags=["Owner"])
 
 
-def _require_owner(current_user: models.User):
-    if current_user.role != models.UserRole.owner:
+def _strip_mongo_id(doc):
+    if isinstance(doc, list):
+        return [_strip_mongo_id(item) for item in doc]
+    if isinstance(doc, dict):
+        clean = dict(doc)
+        clean.pop("_id", None)
+        return clean
+    return doc
+
+
+def _require_owner(current_user: dict):
+    if current_user.get("role") != "owner":
         raise HTTPException(status_code=403, detail="Owner access required")
 
 
 @router.get("/dashboard")
 def owner_dashboard(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
     _require_owner(current_user)
 
-    restaurants = (
-        db.query(models.Restaurant)
-        .filter(models.Restaurant.claimed_by == current_user.id)
-        .all()
-    )
-    restaurant_ids = [r.id for r in restaurants]
-
-    total_reviews = 0
+    restaurants = list(db.restaurants.find({"claimed_by": current_user["id"]}))
+    restaurant_ids = [r["id"] for r in restaurants]
+    reviews = list(db.reviews.find({"restaurant_id": {"$in": restaurant_ids}})) if restaurant_ids else []
+    total_reviews = len(reviews)
     rating_dist = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
-    recent_reviews = []
-
-    if restaurant_ids:
-        total_reviews = (
-            db.query(func.count(models.Review.id))
-            .filter(models.Review.restaurant_id.in_(restaurant_ids))
-            .scalar()
-        )
-
-        dist = (
-            db.query(models.Review.rating, func.count(models.Review.id))
-            .filter(models.Review.restaurant_id.in_(restaurant_ids))
-            .group_by(models.Review.rating)
-            .all()
-        )
-        for rating, count in dist:
-            rating_dist[rating] = count
-
-        recent = (
-            db.query(models.Review)
-            .filter(models.Review.restaurant_id.in_(restaurant_ids))
-            .order_by(models.Review.created_at.desc())
-            .limit(10)
-            .all()
-        )
-        recent_reviews = [schemas.ReviewOut.model_validate(r) for r in recent]
+    for r in reviews:
+        if r.get("rating") in rating_dist:
+            rating_dist[r["rating"]] += 1
+    recent_reviews = sorted(reviews, key=lambda x: x.get("created_at"), reverse=True)[:10]
 
     return {
-        "restaurants": [schemas.RestaurantOut.model_validate(r) for r in restaurants],
+        "restaurants": _strip_mongo_id(restaurants),
         "total_reviews": total_reviews,
         "rating_distribution": rating_dist,
-        "recent_reviews": recent_reviews,
+        "recent_reviews": _strip_mongo_id(recent_reviews),
     }
 
 
 @router.get("/restaurants", response_model=List[schemas.RestaurantOut])
 def get_my_restaurants(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
     _require_owner(current_user)
-    restaurants = (
-        db.query(models.Restaurant)
-        .filter(models.Restaurant.claimed_by == current_user.id)
-        .all()
-    )
-    return restaurants
+    return _strip_mongo_id(list(db.restaurants.find({"claimed_by": current_user["id"]})))
 
 
 @router.get("/restaurants/{restaurant_id}/reviews", response_model=List[schemas.ReviewOut])
 def get_restaurant_reviews(
     restaurant_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
     _require_owner(current_user)
-    restaurant = db.query(models.Restaurant).filter(
-        models.Restaurant.id == restaurant_id,
-        models.Restaurant.claimed_by == current_user.id,
-    ).first()
+    restaurant = db.restaurants.find_one({"id": restaurant_id, "claimed_by": current_user["id"]})
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found or not claimed by you")
-
-    reviews = (
-        db.query(models.Review)
-        .filter(models.Review.restaurant_id == restaurant_id)
-        .order_by(models.Review.created_at.desc())
-        .all()
-    )
-    return reviews
+    return _strip_mongo_id(list(db.reviews.find({"restaurant_id": restaurant_id}).sort("created_at", -1)))

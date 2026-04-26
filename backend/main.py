@@ -2,13 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
-from database import engine, Base
-import models  # noqa — ensures models are registered
-from routers import auth, users, restaurants, owner, ai_assistant
+from routers import auth, users, restaurants, owner
 from config import settings
-
-# Create DB tables
-Base.metadata.create_all(bind=engine)
 
 # Create upload directories
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
@@ -40,7 +35,9 @@ app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(restaurants.router)
 app.include_router(owner.router)
-app.include_router(ai_assistant.router)
+if settings.ENABLE_AI_ROUTE:
+    from routers import ai_assistant
+    app.include_router(ai_assistant.router)
 
 
 @app.get("/")

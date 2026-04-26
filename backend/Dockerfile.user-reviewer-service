@@ -1,0 +1,16 @@
+# Lab 2 Part 1.1 — User / Reviewer Service (frontend-facing API)
+FROM python:3.11-slim
+
+LABEL org.opencontainers.image.title="yelp-user-reviewer-service"
+LABEL com.yelp.lab2.service="user-reviewer"
+
+WORKDIR /app
+
+COPY backend/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+COPY backend /app
+
+EXPOSE 8000
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

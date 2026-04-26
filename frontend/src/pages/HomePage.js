@@ -1,9 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { getRestaurants } from '../api';
 import RestaurantCard from '../components/RestaurantCard';
 import ChatBot from '../components/ChatBot';
-import { useAuth } from '../context/AuthContext';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { selectCurrentUser } from '../features/auth/authSlice';
+import {
+  fetchTopRatedRestaurants,
+  selectTopRatedRestaurants,
+} from '../features/restaurants/restaurantSlice';
 
 const CATEGORIES = [
   { label: 'Restaurants', icon: '🍽️', q: 'restaurant' },
@@ -21,18 +25,18 @@ const CATEGORIES = [
 ];
 
 export default function HomePage() {
-  const { user } = useAuth();
+  const dispatch = useAppDispatch();
+  const user = useAppSelector(selectCurrentUser);
+  const topRated = useAppSelector(selectTopRatedRestaurants);
+
   const navigate = useNavigate();
   const [searchQ, setSearchQ] = useState('');
   const [searchCity, setSearchCity] = useState('');
-  const [topRated, setTopRated] = useState([]);
   const [chatOpen, setChatOpen] = useState(false);
 
   useEffect(() => {
-    getRestaurants({ sort: 'rating', limit: 8 })
-      .then((res) => setTopRated(res.data))
-      .catch(() => {});
-  }, []);
+    dispatch(fetchTopRatedRestaurants());
+  }, [dispatch]);
 
   const handleSearch = (e) => {
     e.preventDefault();
@@ -44,7 +48,6 @@ export default function HomePage() {
 
   return (
     <div className="home-page">
-      {/* Hero */}
       <section className="hero-section">
         <div className="hero-bg">
           <div className="hero-overlay" />
@@ -78,7 +81,6 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* AI Assistant — embedded for logged-in users (prominent); guests use FAB + overlay */}
       {user ? (
         <section className="home-chat-embed-section">
           <div className="section-inner">
@@ -107,7 +109,6 @@ export default function HomePage() {
         </section>
       )}
 
-      {/* Categories */}
       <section className="categories-section">
         <div className="section-inner">
           <div className="categories-grid">
@@ -121,7 +122,6 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Top Rated */}
       {topRated.length > 0 && (
         <section className="featured-section">
           <div className="section-inner">
@@ -136,35 +136,18 @@ export default function HomePage() {
         </section>
       )}
 
-      {/* Add Restaurant CTA */}
       <section className="cta-section">
         <div className="section-inner">
           <div className="cta-card">
             <div className="cta-left">
               <h3 className="cta-title">Know a great place?</h3>
-              <p className="cta-desc">Add a restaurant listing and share it with the community.</p>
+              <p className="cta-desc">Help the community discover new favorites by adding a restaurant.</p>
             </div>
-            <div className="cta-right">
-              <Link to={user ? '/add-restaurant' : '/signup'} className="cta-btn">
-                Add a Restaurant
-              </Link>
-            </div>
+            <Link to="/add-restaurant" className="cta-btn">Add a Restaurant</Link>
           </div>
         </div>
       </section>
 
-      {/* Floating chat — guests only (logged-in users see embedded assistant above) */}
-      {!user && !chatOpen && (
-        <button
-          type="button"
-          className="chat-fab"
-          onClick={() => setChatOpen(true)}
-          title="Ask AI Assistant"
-        >
-          💬
-          <span className="chat-fab-label">Ask AI</span>
-        </button>
-      )}
       {!user && chatOpen && (
         <div className="chatbot-overlay">
           <ChatBot floating onClose={() => setChatOpen(false)} />

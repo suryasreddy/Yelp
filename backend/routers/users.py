@@ -1,12 +1,22 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from sqlalchemy.orm import Session
 from database import get_db
-import models, schemas
+from database import get_next_id
+import schemas
 from auth import get_current_user
 import os, shutil, uuid
 from config import settings
 
 router = APIRouter(prefix="/users", tags=["Users"])
+
+
+def _strip_mongo_id(doc):
+    if isinstance(doc, list):
+        return [_strip_mongo_id(item) for item in doc]
+    if isinstance(doc, dict):
+        clean = dict(doc)
+        clean.pop("_id", None)
+        return clean
+    return doc
 
 
 def _save_upload(file: UploadFile, subfolder: str = "profile") -> str:
@@ -20,92 +30,98 @@ def _save_upload(file: UploadFile, subfolder: str = "profile") -> str:
 
 
 @router.get("/me", response_model=schemas.UserOut)
-def get_me(current_user: models.User = Depends(get_current_user)):
-    return current_user
+def get_me(current_user: dict = Depends(get_current_user)):
+    return _strip_mongo_id(current_user)
 
 
 @router.put("/me", response_model=schemas.UserOut)
 def update_me(
     payload: schemas.UserUpdate,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(current_user, field, value)
-    db.commit()
-    db.refresh(current_user)
-    return current_user
+    updates = payload.model_dump(exclude_unset=True)
+    if updates:
+        db.users.update_one({"id": current_user["id"]}, {"$set": updates})
+    return _strip_mongo_id(db.users.find_one({"id": current_user["id"]}))
 
 
 @router.post("/me/photo", response_model=schemas.UserOut)
 def upload_profile_photo(
     file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image")
     url = _save_upload(file, "profile")
-    current_user.profile_picture = url
-    db.commit()
-    db.refresh(current_user)
-    return current_user
+    db.users.update_one({"id": current_user["id"]}, {"$set": {"profile_picture": url}})
+    return _strip_mongo_id(db.users.find_one({"id": current_user["id"]}))
 
 
 @router.get("/me/preferences", response_model=schemas.PreferencesOut)
 def get_preferences(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
-    prefs = db.query(models.UserPreferences).filter(
-        models.UserPreferences.user_id == current_user.id
-    ).first()
+    prefs = db.user_preferences.find_one({"user_id": current_user["id"]})
     if not prefs:
-        prefs = models.UserPreferences(user_id=current_user.id)
-        db.add(prefs)
-        db.commit()
-        db.refresh(prefs)
-    return prefs
+        prefs = {
+            "id": get_next_id(db, "user_preferences"),
+            "user_id": current_user["id"],
+            "cuisine_preferences": [],
+            "price_range": None,
+            "preferred_location": None,
+            "search_radius": 10,
+            "dietary_needs": [],
+            "ambiance_preferences": [],
+            "sort_preference": "rating",
+        }
+        db.user_preferences.insert_one(prefs)
+    elif "id" not in prefs:
+        prefs["id"] = get_next_id(db, "user_preferences")
+        db.user_preferences.update_one({"_id": prefs["_id"]}, {"$set": {"id": prefs["id"]}})
+    return _strip_mongo_id(prefs)
 
 
 @router.put("/me/preferences", response_model=schemas.PreferencesOut)
 def update_preferences(
     payload: schemas.PreferencesCreate,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
-    prefs = db.query(models.UserPreferences).filter(
-        models.UserPreferences.user_id == current_user.id
-    ).first()
-    if not prefs:
-        prefs = models.UserPreferences(user_id=current_user.id)
-        db.add(prefs)
-
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(prefs, field, value)
-    db.commit()
-    db.refresh(prefs)
-    return prefs
+    db.user_preferences.update_one(
+        {"user_id": current_user["id"]},
+        {
+            "$set": {
+                **payload.model_dump(exclude_unset=True),
+                "user_id": current_user["id"],
+            },
+            "$setOnInsert": {
+                "id": get_next_id(db, "user_preferences"),
+            },
+        },
+        upsert=True,
+    )
+    prefs = db.user_preferences.find_one({"user_id": current_user["id"]})
+    if "id" not in prefs:
+        prefs["id"] = get_next_id(db, "user_preferences")
+        db.user_preferences.update_one({"_id": prefs["_id"]}, {"$set": {"id": prefs["id"]}})
+    return _strip_mongo_id(prefs)
 
 
 @router.get("/me/history")
 def get_history(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
-    reviews = (
-        db.query(models.Review)
-        .filter(models.Review.user_id == current_user.id)
-        .order_by(models.Review.created_at.desc())
-        .all()
-    )
-    added = (
-        db.query(models.Restaurant)
-        .filter(models.Restaurant.added_by == current_user.id)
-        .order_by(models.Restaurant.created_at.desc())
-        .all()
-    )
+    reviews = list(db.reviews.find({"user_id": current_user["id"]}).sort("created_at", -1))
+    added = list(db.restaurants.find({"added_by": current_user["id"]}).sort("created_at", -1))
+    for r in reviews:
+        r.setdefault("photos", [])
+    for a in added:
+        a.setdefault("photos", [])
     return {
-        "reviews": [schemas.ReviewOut.model_validate(r) for r in reviews],
-        "added_restaurants": [schemas.RestaurantOut.model_validate(r) for r in added],
+        "reviews": _strip_mongo_id(reviews),
+        "added_restaurants": _strip_mongo_id(added),
     }

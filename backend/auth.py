@@ -4,9 +4,7 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
 from database import get_db
-import models
 from config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -33,8 +31,8 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db),
-) -> models.User:
+    db=Depends(get_db),
+) -> dict:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -43,31 +41,40 @@ def get_current_user(
     try:
         token = credentials.credentials
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        user_id: int = payload.get("sub")
-        if user_id is None:
+        user_id = payload.get("sub")
+        session_id = payload.get("sid")
+        if user_id is None or session_id is None:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
 
-    user = db.query(models.User).filter(models.User.id == int(user_id)).first()
+    session = db.sessions.find_one({"session_id": session_id, "user_id": int(user_id)})
+    if not session:
+        raise credentials_exception
+
+    user = db.users.find_one({"id": int(user_id)})
     if user is None:
         raise credentials_exception
     return user
 
 
 def get_optional_user(
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
-) -> Optional[models.User]:
+) -> Optional[dict]:
     if credentials is None:
         return None
     try:
         token = credentials.credentials
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        user_id: int = payload.get("sub")
-        if user_id is None:
+        user_id = payload.get("sub")
+        session_id = payload.get("sid")
+        if user_id is None or session_id is None:
             return None
-        user = db.query(models.User).filter(models.User.id == int(user_id)).first()
+        session = db.sessions.find_one({"session_id": session_id, "user_id": int(user_id)})
+        if not session:
+            return None
+        user = db.users.find_one({"id": int(user_id)})
         return user
     except JWTError:
         return None

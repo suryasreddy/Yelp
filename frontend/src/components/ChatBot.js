@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { sendChatMessage } from '../api';
-import { useAuth } from '../context/AuthContext';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import { sendChatMessage } from '../api';
+import { useAppSelector } from '../store/hooks';
+import { selectCurrentUser } from '../features/auth/authSlice';
 
 const QUICK_ACTIONS = [
   'Find dinner tonight',
@@ -32,7 +33,6 @@ function loadStoredMessages(userId) {
   return null;
 }
 
-/** Prior turns for the API — omit the template greeting message. */
 function buildConversationHistory(messages) {
   return messages
     .filter((m) => !m.isGreeting)
@@ -56,10 +56,9 @@ function isFarewellIntent(text) {
 }
 
 export default function ChatBot({ onClose, floating = false, embedded = false }) {
-  const { user } = useAuth();
+  const user = useAppSelector(selectCurrentUser);
 
   const [messages, setMessages] = useState(() => loadStoredMessages(user?.id) || [greeting(user)]);
-
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef(null);
@@ -74,7 +73,7 @@ export default function ChatBot({ onClose, floating = false, embedded = false })
     const stored = loadStoredMessages(user?.id);
     if (stored) setMessages(stored);
     else setMessages([greeting(user)]);
-  }, [user?.id]);
+  }, [user?.id, user]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -90,6 +89,7 @@ export default function ChatBot({ onClose, floating = false, embedded = false })
 
   const sendMessage = async (text) => {
     if (!text.trim()) return;
+
     if (!user) {
       toast.error('Please log in to use the AI assistant');
       return;
@@ -102,7 +102,6 @@ export default function ChatBot({ onClose, floating = false, embedded = false })
     setMessages((prev) => [...prev, userMsg]);
     setInput('');
 
-    // Handle goodbye locally so we don't send "bye" to recommendation endpoint.
     if (farewell) {
       setMessages((prev) => [
         ...prev,
@@ -111,6 +110,7 @@ export default function ChatBot({ onClose, floating = false, embedded = false })
           content: "Goodbye for now! When you're ready, I can help you find your next great meal.",
         },
       ]);
+
       setTimeout(() => {
         clearChat();
         if (onClose && floating) onClose();
@@ -125,8 +125,10 @@ export default function ChatBot({ onClose, floating = false, embedded = false })
         message: text,
         conversation_history: history,
       });
+
       const { response, recommendations } = res.data;
       const recs = Array.isArray(recommendations) ? recommendations : [];
+
       setMessages((prev) => [
         ...prev,
         { role: 'assistant', content: response, recommendations: recs },
@@ -160,12 +162,9 @@ export default function ChatBot({ onClose, floating = false, embedded = false })
             <div className="chatbot-subtitle">Personalized recommendations</div>
           </div>
         </div>
+
         <div className="chatbot-header-right">
-          <button
-            className="chatbot-clear"
-            onClick={clearChat}
-            title="New conversation"
-          >
+          <button className="chatbot-clear" onClick={clearChat} title="New conversation">
             ↺
           </button>
           {onClose && (
@@ -180,16 +179,14 @@ export default function ChatBot({ onClose, floating = false, embedded = false })
         {messages.map((msg, i) => (
           <div key={i} className={`chat-message chat-message-${msg.role}`}>
             {msg.role === 'assistant' && <div className="chat-avatar">🤖</div>}
+
             <div className="chat-bubble">
               <p className="chat-bubble-text">{msg.content}</p>
+
               {msg.recommendations?.length > 0 && (
                 <div className="chat-recommendations">
                   {msg.recommendations.map((rec, j) => (
-                    <Link
-                      to={`/restaurant/${rec.id}`}
-                      key={j}
-                      className="chat-rec-card"
-                    >
+                    <Link to={`/restaurant/${rec.id}`} key={j} className="chat-rec-card">
                       <div className="chat-rec-name">{rec.name}</div>
                       <div className="chat-rec-meta">
                         <span>⭐ {rec.rating}</span>
@@ -204,6 +201,7 @@ export default function ChatBot({ onClose, floating = false, embedded = false })
                 </div>
               )}
             </div>
+
             {msg.role === 'user' && (
               <div className="chat-user-avatar">
                 {user?.name?.[0]?.toUpperCase() || 'U'}
@@ -215,20 +213,23 @@ export default function ChatBot({ onClose, floating = false, embedded = false })
         {loading && (
           <div className="chat-message chat-message-assistant">
             <div className="chat-avatar">🤖</div>
-            <div className="chat-bubble chat-thinking">
-              <span></span>
-              <span></span>
-              <span></span>
+            <div className="chat-bubble">
+              <div className="chat-thinking">
+                <span />
+                <span />
+                <span />
+              </div>
             </div>
           </div>
         )}
+
         <div ref={bottomRef} />
       </div>
 
       {!user && (
         <div className="chatbot-login-prompt">
-          <Link to="/login" className="chatbot-login-btn">
-            Log in for personalized results
+          <Link className="chatbot-login-btn" to="/login">
+            Log in for personalized recommendations
           </Link>
         </div>
       )}
@@ -239,8 +240,8 @@ export default function ChatBot({ onClose, floating = false, embedded = false })
             key={action}
             type="button"
             className="quick-action-btn"
-            disabled={loading}
             onClick={() => sendMessage(action)}
+            disabled={loading}
           >
             {action}
           </button>
@@ -250,16 +251,12 @@ export default function ChatBot({ onClose, floating = false, embedded = false })
       <form className="chatbot-input-area" onSubmit={handleSubmit}>
         <input
           className="chatbot-input"
+          placeholder={user ? 'Ask for restaurant recommendations...' : 'Log in to chat'}
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask me for restaurant recommendations..."
           disabled={loading}
         />
-        <button
-          type="submit"
-          className="chatbot-send-btn"
-          disabled={loading || !input.trim()}
-        >
+        <button className="chatbot-send-btn" type="submit" disabled={loading || !input.trim()}>
           ➤
         </button>
       </form>
