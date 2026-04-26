@@ -1,7 +1,12 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { getRestaurants } from '../api';
 import RestaurantCard from '../components/RestaurantCard';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import {
+  fetchSearchRestaurants,
+  selectSearchResults,
+  selectSearchTotal,
+} from '../features/restaurants/restaurantSlice';
 
 const CUISINES = ['All','Italian','Mexican','Chinese','Japanese','Indian','American','Thai','Mediterranean','French','Korean','Vietnamese','Greek'];
 const PRICES = ['All','$','$$','$$$','$$$$'];
@@ -12,10 +17,12 @@ const SORTS = [
 ];
 
 export default function SearchPage() {
+  const dispatch = useAppDispatch();
+  const restaurants = useAppSelector(selectSearchResults);
+  const total = useAppSelector(selectSearchTotal);
+  const loading = useAppSelector((state) => state.restaurants.loadingSearch);
+
   const [searchParams, setSearchParams] = useSearchParams();
-  const [restaurants, setRestaurants] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [total, setTotal] = useState(0);
 
   const q = searchParams.get('q') || '';
   const city = searchParams.get('city') || '';
@@ -23,37 +30,30 @@ export default function SearchPage() {
   const price = searchParams.get('price') || '';
   const sort = searchParams.get('sort') || 'rating';
 
-  const fetchRestaurants = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = { limit: 24 };
-      if (q) params.q = q;
-      if (city) params.city = city;
-      if (cuisine && cuisine !== 'All') params.cuisine = cuisine;
-      if (price && price !== 'All') params.price_tier = price;
-      if (sort) params.sort = sort;
-      const res = await getRestaurants(params);
-      setRestaurants(res.data);
-      setTotal(res.data.length);
-    } catch {
-      setRestaurants([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [q, city, cuisine, price, sort]);
+  const fetchData = useCallback(() => {
+    const params = { limit: 24 };
+    if (q) params.q = q;
+    if (city) params.city = city;
+    if (cuisine && cuisine !== 'All') params.cuisine = cuisine;
+    if (price && price !== 'All') params.price_tier = price;
+    if (sort) params.sort = sort;
+    dispatch(fetchSearchRestaurants(params));
+  }, [dispatch, q, city, cuisine, price, sort]);
 
-  useEffect(() => { fetchRestaurants(); }, [fetchRestaurants]);
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const updateParam = (key, value) => {
     const next = new URLSearchParams(searchParams);
-    if (value) next.set(key, value); else next.delete(key);
+    if (value) next.set(key, value);
+    else next.delete(key);
     setSearchParams(next);
   };
 
   return (
     <div className="search-page">
       <div className="search-page-inner">
-        {/* Sidebar Filters */}
         <aside className="search-sidebar">
           <h3 className="sidebar-title">Filter Results</h3>
 
@@ -104,7 +104,6 @@ export default function SearchPage() {
           </div>
         </aside>
 
-        {/* Results */}
         <main className="search-results">
           <div className="search-results-header">
             <h2 className="search-results-title">
@@ -122,12 +121,12 @@ export default function SearchPage() {
             <div className="empty-state">
               <div className="empty-icon">🍽️</div>
               <h3>No restaurants found</h3>
-              <p>Try adjusting your search or filters</p>
+              <p>Try adjusting your filters or search terms.</p>
             </div>
           ) : (
             <div className="restaurant-grid">
-              {restaurants.map((r) => (
-                <RestaurantCard key={r.id} restaurant={r} onFavoriteChange={fetchRestaurants} />
+              {restaurants.map((restaurant) => (
+                <RestaurantCard key={restaurant.id} restaurant={restaurant} />
               ))}
             </div>
           )}
@@ -136,3 +135,4 @@ export default function SearchPage() {
     </div>
   );
 }
+

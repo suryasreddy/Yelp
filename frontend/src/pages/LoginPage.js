@@ -1,31 +1,44 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { login } from '../api';
-import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import {
+  loginThunk,
+  selectAuthLoading,
+  selectCurrentUser,
+} from '../features/auth/authSlice';
 
 export default function LoginPage() {
-  const { loginUser } = useAuth();
+  const dispatch = useAppDispatch();
+  const loading = useAppSelector(selectAuthLoading);
+  const user = useAppSelector(selectCurrentUser);
+
   const navigate = useNavigate();
   const location = useLocation();
   const from = location.state?.from || '/';
-  const [form, setForm] = useState({ email: '', password: '' });
-  const [loading, setLoading] = useState(false);
 
-  const handleChange = (e) => setForm((f) => ({ ...f, [e.target.name]: e.target.value }));
+  const [form, setForm] = useState({ email: '', password: '' });
+
+  useEffect(() => {
+    if (user) {
+      navigate(from, { replace: true });
+    }
+  }, [user, from, navigate]);
+
+  const handleChange = (e) => {
+    setForm((f) => ({ ...f, [e.target.name]: e.target.value }));
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
-    try {
-      const res = await login(form);
-      loginUser(res.data.access_token, res.data.user);
-      toast.success(`Welcome back, ${res.data.user.name.split(' ')[0]}!`);
+    const resultAction = await dispatch(loginThunk(form));
+
+    if (loginThunk.fulfilled.match(resultAction)) {
+      const firstName = resultAction.payload.user?.name?.split(' ')[0] || 'there';
+      toast.success(`Welcome back, ${firstName}!`);
       navigate(from, { replace: true });
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Login failed');
-    } finally {
-      setLoading(false);
+    } else {
+      toast.error(resultAction.payload || 'Login failed');
     }
   };
 

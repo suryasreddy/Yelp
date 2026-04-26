@@ -1,43 +1,50 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { logout, selectCurrentUser } from '../features/auth/authSlice';
 
 const BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 export default function Navbar() {
-  const { user, logoutUser } = useAuth();
+  const dispatch = useAppDispatch();
+  const user = useAppSelector(selectCurrentUser);
   const navigate = useNavigate();
+
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropRef = useRef(null);
 
   useEffect(() => {
-    const handler = (e) => { if (dropRef.current && !dropRef.current.contains(e.target)) setDropdownOpen(false); };
+    const handler = (e) => {
+      if (dropRef.current && !dropRef.current.contains(e.target)) {
+        setDropdownOpen(false);
+      }
+    };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const handleLogout = () => { logoutUser(); navigate('/'); };
+  const handleLogout = () => {
+    dispatch(logout());
+    navigate('/');
+  };
 
   return (
     <nav className="yelp-navbar">
       <div className="navbar-inner">
-        {/* Logo */}
         <Link to="/" className="navbar-logo">
           <svg width="65" height="28" viewBox="0 0 65 28" fill="none">
             <text x="0" y="24" fontFamily="'Georgia', serif" fontSize="26" fontWeight="bold" fill="#fff" letterSpacing="-1">yelp</text>
-            <circle cx="58" cy="6" r="5" fill="#ff4438"/>
+            <circle cx="58" cy="6" r="5" fill="#ff4438" />
             <text x="55.5" y="9.5" fontSize="7" fill="#fff" fontWeight="bold">★</text>
           </svg>
         </Link>
 
-        {/* Search bar */}
         <SearchBar />
 
-        {/* Right nav */}
         <div className="navbar-right">
           {user ? (
             <>
-              <Link to="/add-restaurant" className="nav-link-btn">Write a Review</Link>
+              <Link to="/add-restaurant" className="nav-link-btn">Add Restaurant</Link>
               <div className="nav-divider" />
               <div className="user-menu" ref={dropRef}>
                 <button className="user-avatar-btn" onClick={() => setDropdownOpen((o) => !o)}>
@@ -49,6 +56,7 @@ export default function Navbar() {
                   <span className="nav-username">{user.name?.split(' ')[0]}</span>
                   <span className="chevron">▾</span>
                 </button>
+
                 {dropdownOpen && (
                   <div className="dropdown-menu">
                     <div className="dropdown-header">
@@ -104,16 +112,19 @@ function SearchBar() {
           onChange={(e) => setQuery(e.target.value)}
         />
       </div>
+
       <div className="search-divider-v" />
-      <div className="search-field search-field-right">
+
+      <div className="search-field">
         <span className="search-icon">📍</span>
         <input
           className="search-input"
-          placeholder="city, zip..."
+          placeholder="San Francisco"
           value={city}
           onChange={(e) => setCity(e.target.value)}
         />
       </div>
+
       <button type="submit" className="search-btn">Search</button>
     </form>
   );

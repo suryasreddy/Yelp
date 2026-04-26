@@ -8,7 +8,9 @@ const api = axios.create({
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
   return config;
 });
 
@@ -18,7 +20,6 @@ api.interceptors.response.use(
     if (err.response?.status === 401) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      window.location.href = '/login';
     }
     return Promise.reject(err);
   }
@@ -54,9 +55,12 @@ export const claimRestaurant = (id) => api.post(`/restaurants/${id}/claim`);
 
 // Reviews
 export const getReviews = (restaurantId) => api.get(`/restaurants/${restaurantId}/reviews`);
-export const createReview = (restaurantId, data) => api.post(`/restaurants/${restaurantId}/reviews`, data);
-export const updateReview = (restaurantId, reviewId, data) => api.put(`/restaurants/${restaurantId}/reviews/${reviewId}`, data);
-export const deleteReview = (restaurantId, reviewId) => api.delete(`/restaurants/${restaurantId}/reviews/${reviewId}`);
+export const createReview = (restaurantId, data) =>
+  api.post(`/restaurants/${restaurantId}/reviews`, data);
+export const updateReview = (restaurantId, reviewId, data) =>
+  api.put(`/restaurants/${restaurantId}/reviews/${reviewId}`, data);
+export const deleteReview = (restaurantId, reviewId) =>
+  api.delete(`/restaurants/${restaurantId}/reviews/${reviewId}`);
 export const uploadReviewPhoto = (restaurantId, reviewId, file) => {
   const fd = new FormData();
   fd.append('file', file);
@@ -77,3 +81,4 @@ export const getOwnerRestaurantReviews = (id) => api.get(`/owner/restaurants/${i
 export const sendChatMessage = (data) => api.post('/ai-assistant/chat', data);
 
 export default api;
+

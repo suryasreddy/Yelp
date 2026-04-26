@@ -19,3 +19,4 @@ frontend/.env
 # JMeter local runs (regenerate with -e -o)
 jmeter/results/
 jmeter.log
+backend/uploads/profile/
