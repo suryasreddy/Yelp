@@ -1,17 +1,24 @@
 # Python
-venv/
-__pycache__/
+backend/venv/
+backend/__pycache__/
+backend/routers/__pycache__/
 *.pyc
+*.pyo
 
 # Node
-node_modules/
 frontend/node_modules/
 frontend/build/
 
-# Env files
-.env
+# Environment
 backend/.env
-frontend/.env
+.env
+
+# Mac
+.DS_Store
+backend/.DS_Store
+frontend/.DS_Store
+frontend/src/.DS_Store
+backend/uploads/.DS_Store
 
 # OS
 .DS_Store
@@ -20,3 +27,5 @@ frontend/.env
 jmeter/results/
 jmeter.log
 backend/uploads/profile/
+# Uploads
+backend/uploads/
